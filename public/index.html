@@ -33,6 +33,15 @@
 
     main{ max-width:1200px; margin:18px auto 28px; padding:0 16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px }
     .card{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; box-shadow:0 6px 26px rgba(0,0,0,.22) }
+    /* Wider auto control card: span 2 columns on wide screens */
+    .card.auto-card{ grid-column: span 2; min-width:560px; }
+    @media (max-width: 1000px){
+      .card.auto-card{ grid-column:1 / -1; min-width:0; }
+    }
+    /* Prevent inner KV with buttons from wrapping prematurely */
+    .auto-card .row .kv[title]{ flex-wrap:nowrap; white-space:nowrap; }
+    .auto-card .row .kv[title] button{ white-space:nowrap; }
+
     .label{ color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.6px }
     .value{ font-size:26px; font-weight:600; margin-top:6px }
     .row{ display:flex; align-items:center; gap:10px; margin-top:10px; color:var(--muted); flex-wrap:wrap }
@@ -119,7 +128,7 @@
     </section>
 
     <!-- Auto Control -->
-    <section class="card">
+    <section class="card auto-card">
       <div class="label">Auto Control</div>
       <div class="row" style="margin-top:8px">
         <label class="switch" title="Enable/disable automatic solar surplus control">
@@ -197,7 +206,7 @@
       $('cons-l3').textContent = fmtW(c.l3);
 
       const pill=$('grid-pill'); pill.classList.remove('ok','warn','bad'); pill.classList.add(gridClass(pt));
-      pill.textContent = pt <= -50 ? 'Exporting (Surplus)' : (Math.abs(pt) < 50 ? 'Near Zero' : 'Importing');
+      pill.textContent = pt <= -50 ? 'Exporting (Surplus)' : (Math.abs(pt) < 50 ? 'Near Zero' : 'Getting Power (Deficit)');
 
       $('last-update').textContent = new Date(payload.timestamp || Date.now()).toLocaleTimeString();
     }
@@ -342,7 +351,7 @@
       const s = m?.status || m?.STATUS || m?.state || '';
       if (s === 'S' || /alive|ok|running/i.test(s)) return {text:'Alive', cls:'ok'};
       if (/degrad|warm|starting|init/i.test(s)) return {text:'Degraded', cls:'warn'};
-      return {text: s || 'Unknown', cls:'bad'};
+      return {text:'OFFLINE', cls:'bad'}; 
     }
 
     function minerCardTpl(m, idx){
