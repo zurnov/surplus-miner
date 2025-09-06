@@ -11,6 +11,7 @@
 - True per‑miner OFF (not just low power) + full BOSminer stop when shutting down
 - Automatic shutdown after sustained deficit (configurable minutes)
 - Automatic resume after sustained surplus (configurable minutes)
+- Startup state detection: on controller launch it queries each miner (running / stopped + current power_target) so UI does not show 0 W for already running miners
 - Fair distribution & combo selection to avoid oscillation
 - Socket.io push updates to the web UI (5 s cadence)
 - Lightweight responsive dashboard (pure HTML/CSS/JS, no build chain)
@@ -36,6 +37,7 @@
 4. Direct jump to that combo (no incremental stepping), issuing per‑miner target or OFF.
 5. Sustained deficit timer triggers full shutdown (BOSminer stop) when below threshold long enough.
 6. Sustained surplus timer triggers resume (BOSminer start) when miners are off and surplus persists.
+7. Startup sync: shortly after server start a lightweight SSH probe runs for each miner: (a) is BOSminer running? (b) what is current power_target in /etc/bosminer.toml? It seeds internal state & emits an initial `auto_control_update` so the dashboard reflects real watt targets instead of 0.
 
 ![alt text](image-1.png)
 
@@ -92,14 +94,16 @@ npm start
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/miners` | Miner list + last applied targets + state |
-| POST | `/api/auto-control` | Enable / disable auto control (`{ enabled: true/false }`) |
-| GET | `/api/auto-control` | Returns `{ enabled, lastTargets, minersAreShutDown }` |
+| POST | `/api/auto-control` | Enable / disable auto control (`{ enable: true/false }`) |
+| GET | `/api/auto-control` | Returns `{ enabled, lastAvgGridPower, perMinerTargets }` |
 | GET | `/api/power` | Current miner(s) power (combined or per host) |
-| POST | `/api/power-target` | Manual override per miner (if implemented) |
+| POST | `/api/power-target` | Manual override per miner (or shutdown/resume) |
 | GET | `/api/overview` | Raw miner summary/devs/pools passthrough |
 | GET | `/api/venus` | Pass‑through for Venus data (grid / consumption) |
 
-Socket.io event: `data_update` every 5 s → `{ power:{...}, consumption:{...}, timestamp }`.
+Socket.io events:
+- `data_update` every 5 s → `{ power:{...}, consumption:{...}, timestamp }`.
+- `auto_control_update` on state changes (enable/disable, shutdown/resume, target application, startup sync) → `{ enabled, lastAvgGridPower, perMinerTargets, autoEvent? }`.
 
 ## Logging
 - State transitions (enable/disable auto, shutdown, resume) always logged.
@@ -119,6 +123,7 @@ Ideas:
 - The control loop interval is currently 60 s (see `SURPLUS_CHECK_INTERVAL`). Shorter intervals increase responsiveness but may react to noise—tune with moving average window length.
 - Discrete level list defined in `ALLOWED_LEVELS` inside `power-control.js`.
 - Combo selection logic in `pickBestCombo` (end of file).
+- Startup detection logic: `detectInitialMinerStates()` (near bottom of `power-control.js`) issues one SSH command per miner to determine running/stopped and parse `power_target`; results initialize `lastAutoTargets` and emit an initial UI update.
 
 ## Safety & Assumptions
 - Assumes miners can safely jump between the defined power targets.

@@ -907,3 +907,69 @@ function pickBestCombo(surplusW){
   }
   return best;
 }
+
+// --- Startup: detect existing miner states (running / stopped + current power_target) ---
+async function detectInitialMinerStates(){
+  if (!MINER_HOSTS.length) return;
+  console.log('[AUTO] Detecting initial miner states...');
+  const tasks = MINER_HOSTS.map(host => new Promise(resolve => {
+    // Use single quotes outside and carefully escape inner single quotes for sed/grep
+    const sshCmd = `ssh root@${host} 'if /etc/init.d/bosminer status >/dev/null 2>&1 || pgrep -x bosminer >/dev/null; then state=RUNNING; else state=STOPPED; fi; pt=$(grep -E "^[[:space:]]*power_target[[:space:]]*=" /etc/bosminer.toml 2>/dev/null | head -1 | sed -E "s/.*=[[:space:]]*([0-9]+).*/\\1/"); echo "$state $pt"'`;
+    exec(sshCmd, (err, stdout, stderr) => {
+      if (err) {
+        console.warn(`[AUTO] Initial detect failed for ${host}: ${stderr || err.message}`);
+        return resolve({ host, state: 'UNKNOWN', power: 0 });
+      }
+      const out = (stdout || '').trim();
+      const parts = out.split(/\s+/);
+      const state = parts[0] || 'UNKNOWN';
+      const power = parseInt(parts[1], 10);
+      resolve({ host, state, power: Number.isFinite(power) ? power : 0 });
+    });
+  }));
+
+  try {
+    const results = await Promise.all(tasks);
+    let runningCount = 0;
+    for (const r of results){
+      if (r.state === 'RUNNING') {
+        minerStopped[r.host] = false;
+        // If we detect an existing power target keep it; else default MIN_POWER
+        lastAutoTargets[r.host] = r.power > 0 ? r.power : MIN_POWER;
+        runningCount++;
+      } else if (r.state === 'STOPPED') {
+        minerStopped[r.host] = true;
+        lastAutoTargets[r.host] = 0;
+      } else { // unknown
+        // Leave defaults; treat as stopped to avoid accidental commands
+        minerStopped[r.host] = true;
+        if (!Number.isFinite(lastAutoTargets[r.host])) lastAutoTargets[r.host] = 0;
+      }
+      console.log(`[AUTO] ${r.host} -> ${r.state}${Number.isFinite(r.power) ? ` (power_target ~${r.power}W)` : ''}`);
+    }
+    minersAreShutDown = runningCount === 0; // if all stopped consider globally shut down
+    io.emit('auto_control_update', {
+      enabled: autoControlEnabled,
+      lastAvgGridPower: getMovingAvg(gridPowerHistory),
+      perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h=>[h, lastAutoTargets[h] || 0]))
+    });
+  } catch (e) {
+    console.warn('[AUTO] Initial detection error:', e.message);
+  }
+}
+
+// Kick off detection shortly after startup (allow env + server init)
+setTimeout(()=>{ detectInitialMinerStates(); }, 1500);
+// Re-run detection when auto control is enabled the first time if we have no targets yet
+function ensureDetectedOnEnable(){
+  const missing = MINER_HOSTS.some(h => !Number.isFinite(lastAutoTargets[h]));
+  if (missing) detectInitialMinerStates();
+}
+
+// Patch auto-control toggle to ensure detection. This middleware must be registered before the route definition below.
+app.use('/api/auto-control', (req, res, next) => {
+  if (req.method === 'POST' && req.body && typeof req.body.enable === 'boolean' && req.body.enable) {
+    ensureDetectedOnEnable();
+  }
+  next();
+});
