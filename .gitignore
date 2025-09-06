@@ -1,0 +1,67 @@
+# Node dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+*.lcov
+
+# Build artifacts
+dist/
+build/
+.tmp/
+.temp/
+.cache/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+.vscode-test/
+.history/
+
+# Optional lock files (keep the one you use)
+yarn.lock
+pnpm-lock.yaml
+# package-lock.json  # (keep if you use npm; currently present so we don't ignore it)
+
+# Archives / backups
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.bak
+*.orig
+# Debian / local packages
+*.deb
+grpcurl_*.deb
+
+# Miner config backups (retain originals in minerConfig if needed)
+minerConfig/*.tar.gz
+
+# Socket.io transpiled cache (if any)
+*.tsbuildinfo
+
+# Misc
+*.local

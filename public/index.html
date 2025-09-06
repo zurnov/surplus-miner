@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BOSminer Solar Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#0e1116; --panel:#141824; --muted:#8b91a6; --fg:#e9ecf3; --accent:#6aa0ff;
+      --ok:#2ecc71; --warn:#f1c40f; --bad:#e74c3c; --line:#222637; --chip:#1a2031;
+    }
+    *{ box-sizing:border-box }
+    html,body{ height:100% }
+    body{
+      margin:0; background:var(--bg); color:var(--fg);
+      font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial;
+      -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+    }
+    header{
+      position:sticky; top:0; z-index:5; background:linear-gradient(180deg, #0e1116 0%, #0e1116ee 70%, #0e111600 100%);
+      backdrop-filter: blur(6px);
+      border-bottom:1px solid var(--line);
+    }
+    .topbar{ max-width:1200px; margin:0 auto; padding:14px 16px; display:flex; align-items:center; gap:12px; }
+    .brand{ font-weight:600; letter-spacing:.2px; font-size:15px }
+    .spacer{ flex:1 }
+    .chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--line); background:var(--chip); border-radius:999px; font-size:12px; color:var(--muted) }
+    .dot{ width:8px; height:8px; border-radius:50%; background:#777 }
+    .dot.ok{ background:var(--ok) } .dot.warn{ background:var(--warn) } .dot.bad{ background:var(--bad) }
+
+    main{ max-width:1200px; margin:18px auto 28px; padding:0 16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px }
+    .card{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; box-shadow:0 6px 26px rgba(0,0,0,.22) }
+    .label{ color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.6px }
+    .value{ font-size:26px; font-weight:600; margin-top:6px }
+    .row{ display:flex; align-items:center; gap:10px; margin-top:10px; color:var(--muted); flex-wrap:wrap }
+    .kv{ display:flex; align-items:center; gap:6px; background:var(--chip); border:1px solid var(--line); padding:6px 10px; border-radius:8px; font-size:12px }
+    .right{ margin-left:auto }
+    .pill{ padding:4px 8px; border-radius:999px; border:1px solid var(--line); font-size:12px; color:var(--muted) }
+    .pill.ok{ color:var(--ok); border-color:#224b35; background:#12261c }
+    .pill.warn{ color:var(--warn); border-color:#4b4522; background:#262112 }
+    .pill.bad{ color:var(--bad); border-color:#4b2222; background:#261212 }
+
+    /* Miners grid */
+    .miners{ grid-column:1 / -1 }
+    .miners-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-top:12px }
+    .miner-card{ padding:16px; border-radius:12px; background:var(--panel); border:1px solid var(--line) }
+    .miner-head{ display:flex; align-items:center; gap:10px; margin-bottom:10px }
+    .miner-host{ font-weight:600 }
+    .metric-row{ display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:6px }
+    .metric{ background:var(--chip); border:1px solid var(--line); border-radius:10px; padding:10px }
+    .metric .k{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px }
+    .metric .v{ font-weight:600; margin-top:4px; font-size:18px }
+
+    .controls{ display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap }
+    input[type=number]{
+      -moz-appearance: textfield; appearance:textfield; width:112px; padding:8px 10px; border-radius:8px;
+      border:1px solid var(--line); background:#0f1320; color:var(--fg); outline:none;
+    }
+    input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button{ -webkit-appearance: none; margin: 0; }
+    button{
+      cursor:pointer; padding:8px 12px; border-radius:8px; border:1px solid var(--line);
+      background:#1b2340; color:#e9ecf3; font-weight:600; letter-spacing:.2px; transition:.15s ease all;
+    }
+    button:hover{ filter:brightness(1.1) }
+    .btn-primary{ background:#2b5cff; border-color:#2b5cff }
+    .btn-danger{ background:#e74c3c; border-color:#c74233 }
+    .btn-warn{ background:#444; border-color:#333 }
+    .btn-ok{ background:#2ecc71; border-color:#27ae60 }
+
+    .is-disabled{ opacity:.6; pointer-events:none }
+
+    .switch{ position:relative; display:inline-block; width:46px; height:26px; }
+    .switch input{ opacity:0; width:0; height:0 }
+    .slider{ position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:#333; transition:.2s; border-radius:999px; border:1px solid var(--line) }
+    .slider:before{ position:absolute; content:""; height:20px; width:20px; left:3px; bottom:3px; background:white; transition:.2s; border-radius:50% }
+    input:checked + .slider{ background:#2b5cff }
+    input:checked + .slider:before{ transform:translateX(20px) }
+
+    footer{ max-width:1200px; margin:8px auto 24px; padding:0 16px; color:var(--muted); font-size:12px }
+    a{ color:var(--accent); text-decoration:none }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="brand">BOSminer Solar Control</div>
+      <div class="chip" id="conn-chip"><span class="dot" id="conn-dot"></span><span id="conn-text">Connecting…</span></div>
+      <div class="chip">Last update: <span id="last-update" style="margin-left:6px">—</span></div>
+      <div class="spacer"></div>
+      <div class="chip">Backend: <span id="backend-url" style="margin-left:6px"></span></div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Grid Power -->
+    <section class="card">
+      <div class="label">Grid Power</div>
+      <div class="value" id="grid-total">—</div>
+      <div class="row">
+        <div class="kv">L1: <span id="grid-l1">—</span></div>
+        <div class="kv">L2: <span id="grid-l2">—</span></div>
+        <div class="kv">L3: <span id="grid-l3">—</span></div>
+        <span class="right pill" id="grid-pill">Idle</span>
+      </div>
+    </section>
+
+    <!-- Consumption -->
+    <section class="card">
+      <div class="label">Consumption</div>
+      <div class="value" id="cons-total">—</div>
+      <div class="row">
+        <div class="kv">L1: <span id="cons-l1">—</span></div>
+        <div class="kv">L2: <span id="cons-l2">—</span></div>
+        <div class="kv">L3: <span id="cons-l3">—</span></div>
+      </div>
+    </section>
+
+    <!-- Auto Control -->
+    <section class="card">
+      <div class="label">Auto Control</div>
+      <div class="row" style="margin-top:8px">
+        <label class="switch" title="Enable/disable automatic solar surplus control">
+          <input type="checkbox" id="auto-toggle" />
+          <span class="slider"></span>
+        </label>
+        <span id="auto-status" class="pill warn">Checking…</span>
+        <span class="kv" id="auto-avg">Avg grid: —</span>
+        <span class="spacer"></span>
+        <div class="kv" title="Quick set all miners to a fixed target when Auto is OFF">
+          All: 
+          <button class="btn-warn" data-all="800">800W</button>
+          <button class="btn-warn" data-all="1000">1000W</button>
+          <button class="btn-warn" data-all="1420">1420W</button>
+          <button class="btn-warn" data-all="100">Pause</button>
+          <button class="btn-danger" data-all="0">Stop</button>
+        </div>
+      </div>
+      <div class="row" style="font-size:12px; color:var(--muted)">
+        Auto distributes solar surplus across miners in steps and pauses miners if no surplus persists. Manual controls are dimmed while Auto is ON.
+      </div>
+    </section>
+
+    <!-- Miners -->
+    <section class="card miners">
+      <div class="label">Miners</div>
+      <div class="miners-grid" id="miners-grid"></div>
+    </section>
+  </main>
+
+  <footer>
+    Real-time grid and consumption via Victron MQTT. Per-miner control uses PAPI + SSH through the backend.
+  </footer>
+
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script>
+    // Configuration
+    const API_BASE = 'http://localhost:3099'; // Backend base URL
+    document.getElementById('backend-url').textContent = API_BASE;
+
+    // Utilities
+    const $ = (id) => document.getElementById(id);
+    const fmtW = (w) => (w == null || isNaN(w)) ? '—' : `${Math.round(w).toLocaleString()} W`;
+    const fmtTHs = (ths) => (ths == null || isNaN(ths)) ? '—' : `${Number(ths).toFixed(2)} TH/s`;
+    const fmtUptime = (sec) => {
+      // Treat 0s as valid and show 0m
+      if (sec == null || !isFinite(sec)) return '—';
+      const d = Math.floor(sec/86400), h = Math.floor((sec%86400)/3600), m = Math.floor((sec%3600)/60);
+      const a=[]; if (d) a.push(`${d}d`); if (h) a.push(`${h}h`); if (m || (!d && !h)) a.push(`${m}m`); return a.join(' ');
+    };
+    const gridClass = (w) => w <= -50 ? 'ok' : (Math.abs(w) < 50 ? 'warn' : 'bad');
+
+    // Connection chip
+    function setConn(status){
+      const dot=$('conn-dot'), txt=$('conn-text');
+      dot.classList.remove('ok','warn','bad');
+      if(status==='connected'){ dot.classList.add('ok'); txt.textContent='Connected'; }
+      else if(status==='reconnecting'){ dot.classList.add('warn'); txt.textContent='Reconnecting…'; }
+      else { dot.classList.add('bad'); txt.textContent='Disconnected'; }
+    }
+
+    // Grid + Consumption rendering
+    function renderPower(payload){
+      if(!payload) return;
+      const p = payload.power || {}; const c = payload.consumption || {};
+      const pt = Number(p.total ?? (p.l1||0)+(p.l2||0)+(p.l3||0));
+      const ct = Number(c.total ?? (c.l1||0)+(c.l2||0)+(c.l3||0));
+      $('grid-total').textContent = fmtW(pt);
+      $('grid-l1').textContent = fmtW(p.l1);
+      $('grid-l2').textContent = fmtW(p.l2);
+      $('grid-l3').textContent = fmtW(p.l3);
+      $('cons-total').textContent = fmtW(ct);
+      $('cons-l1').textContent = fmtW(c.l1);
+      $('cons-l2').textContent = fmtW(c.l2);
+      $('cons-l3').textContent = fmtW(c.l3);
+
+      const pill=$('grid-pill'); pill.classList.remove('ok','warn','bad'); pill.classList.add(gridClass(pt));
+      pill.textContent = pt <= -50 ? 'Exporting (Surplus)' : (Math.abs(pt) < 50 ? 'Near Zero' : 'Importing');
+
+      $('last-update').textContent = new Date(payload.timestamp || Date.now()).toLocaleTimeString();
+    }
+
+    // Auto Control state
+    const auto = { enabled:false, lastAvgGridPower: null, perMinerTargets:{} };
+
+    function renderAuto(){
+      const t=$('auto-toggle'); const st=$('auto-status'); const avg=$('auto-avg');
+      t.checked = !!auto.enabled;
+      st.classList.remove('ok','warn','bad');
+      if (auto.enabled){ st.textContent='Auto: Enabled'; st.classList.add('ok'); }
+      else { st.textContent='Auto: Disabled'; st.classList.add('bad'); }
+      if (auto.lastAvgGridPower != null) avg.textContent = 'Avg grid: ' + fmtW(auto.lastAvgGridPower);
+      // Dim manual controls when auto is on
+      document.querySelectorAll('.miner-card .controls').forEach(el=>{
+        if (auto.enabled) el.classList.add('is-disabled'); else el.classList.remove('is-disabled');
+      });
+      // annotate miner cards with auto targets
+      document.querySelectorAll('.miner-card').forEach(card=>{
+        const idx = Number(card.getAttribute('data-index'));
+        const host = minerState[idx]?.host || minerState[idx]?.ip;
+        const tgt = auto.perMinerTargets?.[host];
+        let badge = card.querySelector('[data-k="auto-badge"]');
+        if (!badge){
+          const head = card.querySelector('.miner-head');
+          badge = document.createElement('span');
+          badge.setAttribute('data-k','auto-badge');
+          badge.className = 'pill warn';
+          head.appendChild(badge);
+        }
+        if (auto.enabled && tgt != null){
+          badge.style.display='inline-flex';
+          const paused = Number(tgt) <= 150;
+          badge.classList.remove('ok','warn','bad');
+          badge.classList.add(paused ? 'warn' : 'ok');
+          badge.textContent = paused ? 'Auto paused' : `Auto target: ${Math.round(tgt)}W`;
+        } else {
+          badge.style.display='none';
+        }
+      });
+    }
+
+    // Miners UI
+    const minersGrid = $('miners-grid');
+    let minerState = []; // cached array
+
+    function getNum(...vals){
+      for(const v of vals){ const n = Number(v); if (isFinite(n)) return n; }
+      return null;
+    }
+
+    // Parse a hashrate string like "12.34 TH/s", "850 GH/s", or "700000 MH/s" into TH/s
+    function parseRateToTHs(str){
+      if (typeof str !== 'string') return null;
+      const s = str.trim();
+      const m = s.match(/([\d.]+)\s*([TGMK]?H)\/?s?/i);
+      if (m) {
+        const val = parseFloat(m[1]);
+        if (!isFinite(val)) return null;
+        const unit = (m[2] || 'TH').toUpperCase();
+        if (unit.startsWith('T')) return val;
+        if (unit.startsWith('G')) return val/1000;
+        if (unit.startsWith('M')) return val/1e6;
+        if (unit.startsWith('K')) return val/1e9;
+        return val; // assume TH if unknown
+      }
+      const n = parseFloat(s);
+      return isFinite(n) ? n : null;
+    }
+
+    function getTHs(m){
+      // Prefer explicit numeric fields
+      const thsDirect = getNum(m?.hashrateThs, m?.ths, m?.hashrateTHs);
+      if (thsDirect != null) return thsDirect;
+      // Common cgminer totals
+      if (m && (m['GHS 5s'] != null || m.GHS5s != null)) {
+        const g = getNum(m['GHS 5s'], m.GHS5s);
+        if (g != null) return g/1000;
+      }
+      if (m && (m['MHS 5s'] != null || m.MHS5s != null || m.mhs5s != null || m.mhs_5s != null)) {
+        const mh = getNum(m['MHS 5s'], m.MHS5s, m.mhs5s, m.mhs_5s);
+        if (mh != null) return mh/1e6;
+      }
+      // Parse hashrate string, if present
+      const str = m?.hashrate;
+      const parsed = parseRateToTHs(str);
+      if (parsed != null) return parsed;
+      // Sum per-chain hashrates if available on m.devs
+      if (Array.isArray(m?.devs) && m.devs.length) {
+        let sum = 0, any=false;
+        for (const d of m.devs) {
+          const v = parseRateToTHs(d?.hashrate);
+          if (v != null) { sum += v; any = true; }
+        }
+        if (any) return sum;
+      }
+      return null;
+    }
+
+    function getPower(m){
+      return getNum(m?.powerW, m?.totalPower, m?.power, m?.power_total, m?.power_now);
+    }
+
+    // Parse uptime strings like "1d 2h 3m", "12:34:56", or "5h" to seconds
+    function parseUptimeToSec(val){
+      if (val == null) return null;
+      if (typeof val === 'number' && isFinite(val)) return val;
+      const s = String(val).trim();
+      if (!s) return null;
+      // d h m s tokens
+      let total = 0; let matched = false;
+      s.replace(/(\d+)\s*d/ig, (_,d)=>{ total += parseInt(d,10)*86400; matched=true; return ''; });
+      s.replace(/(\d+)\s*h/ig, (_,h)=>{ total += parseInt(h,10)*3600; matched=true; return ''; });
+      s.replace(/(\d+)\s*m/ig, (_,m)=>{ total += parseInt(m,10)*60; matched=true; return ''; });
+      s.replace(/(\d+)\s*s/ig, (_,ss)=>{ total += parseInt(ss,10); matched=true; return ''; });
+      if (matched) return total;
+      // HH:MM[:SS] or DD:HH:MM:SS
+      const parts = s.split(':').map(p=>parseInt(p,10));
+      if (parts.every(n=>!isNaN(n))) {
+        if (parts.length === 4) return parts[0]*86400 + parts[1]*3600 + parts[2]*60 + parts[3];
+        if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+        if (parts.length === 2) return parts[0]*60 + parts[1];
+      }
+      return null;
+    }
+
+    function getUptimeSec(m){
+      const sec = getNum(m?.uptimeSec, m?.Elapsed, m?.uptime_seconds, m?.uptime_sec);
+      if (sec != null) return sec;
+      return parseUptimeToSec(m?.uptime || m?.Uptime);
+    }
+
+    function formatUptime(m){
+      const sec = getUptimeSec(m);
+      if (sec != null) return fmtUptime(sec);
+      const s = m?.uptime || m?.Uptime;
+      return (typeof s === 'string' && s.trim()) ? s : '—';
+    }
+
+    function getStatus(m){
+      const s = m?.status || m?.STATUS || m?.state || '';
+      if (s === 'S' || /alive|ok|running/i.test(s)) return {text:'Alive', cls:'ok'};
+      if (/degrad|warm|starting|init/i.test(s)) return {text:'Degraded', cls:'warn'};
+      return {text: s || 'Unknown', cls:'bad'};
+    }
+
+    function minerCardTpl(m, idx){
+      const st = getStatus(m);
+      return `
+        <div class="miner-card" data-index="${idx}">
+          <div class="miner-head">
+            <div class="miner-host">${m.host || m.ip || 'Miner ' + idx}</div>
+            <span class="pill ${st.cls}" title="Status">${st.text}</span>
+            <span class="spacer"></span>
+          </div>
+          <div class="metric-row">
+            <div class="metric"><div class="k">TH/s</div><div class="v" data-k="ths">${fmtTHs(getTHs(m))}</div></div>
+            <div class="metric"><div class="k">Power</div><div class="v" data-k="power">${fmtW(getPower(m))}</div></div>
+            <div class="metric"><div class="k">Uptime</div><div class="v" data-k="uptime">${formatUptime(m)}</div></div>
+          </div>
+          <div class="row" style="gap:8px; margin-top:10px">
+            <div class="kv" title="Active pool URL">Pool: ${m.activePool || '—'}</div>
+            <div class="kv" title="Active chains / total">Chains: ${Number(m.activeChains||0)}/${Number(m.chains||0)}</div>
+            <div class="kv" title="HW errors">HW: ${Number(m.hwErrors||0)}</div>
+          </div>
+          <div class="controls">
+            <input type="number" min="0" max="1600" step="10" placeholder="Watts" value="${Math.min(1400, Math.max(0, Math.round(getPower(m) || 1200)))}" />
+            <button class="btn-primary" data-act="apply">Apply</button>
+            <button class="btn-warn" data-act="set-800">800W</button>
+            <button class="btn-warn" data-act="set-1000">1000W</button>
+            <button class="btn-warn" data-act="set-1420">1420W</button>
+            <button class="btn-danger" data-act="pause">Pause</button>
+            <button class="btn-warn" data-act="stop">Stop</button>
+            <button class="btn-ok" data-act="resume">Resume</button>
+          </div>
+          <div class="row" style="font-size:12px" data-k="msg"></div>
+        </div>`;
+    }
+
+    function renderMiners(miners){
+      minerState = Array.isArray(miners?.miners) ? miners.miners : (Array.isArray(miners) ? miners : []);
+      minersGrid.innerHTML = minerState.map(minerCardTpl).join('');
+      // Wire controls
+      minersGrid.querySelectorAll('.miner-card').forEach(card => {
+        const idx = Number(card.getAttribute('data-index'));
+        card.addEventListener('click', async (e) => {
+          const btn = e.target.closest('button'); if(!btn) return;
+          const act = btn.getAttribute('data-act');
+          const input = card.querySelector('input[type=number]');
+          const msg = card.querySelector('[data-k="msg"]');
+          msg.textContent = '';
+          try{
+            if (act === 'set-800' || act === 'set-1000' || act === 'set-1420') {
+              const watts = act === 'set-800' ? 800 : (act === 'set-1000' ? 1000 : 1420);
+              input.value = watts;
+              // fall through to apply
+              await fetch(`${API_BASE}/api/power-target?miner=${idx}`,{
+                method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ watts })
+              }).then(r=>{ if(!r.ok) throw new Error('Failed'); return r.json(); });
+              msg.textContent = `Applied ${watts} W`;
+            } else if (act === 'apply') {
+              const watts = Number(input.value);
+              if (!isFinite(watts) || watts < 0 || watts > 1600) throw new Error('Enter 0–1600 W');
+              await fetch(`${API_BASE}/api/power-target?miner=${idx}`,{
+                method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ watts })
+              }).then(r=>{ if(!r.ok) throw new Error('Failed'); return r.json(); });
+              msg.textContent = `Applied ${watts} W`;
+            } else if (act === 'pause') {
+              const watts = 100; // low-power pause
+              await fetch(`${API_BASE}/api/power-target?miner=${idx}`,{
+                method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ watts })
+              }).then(r=>{ if(!r.ok) throw new Error('Failed'); return r.json(); });
+              input.value = watts;
+              msg.textContent = 'Paused at 100 W';
+            } else if (act === 'stop') {
+              await fetch(`${API_BASE}/api/power-target?miner=${idx}`,{
+                method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ shutdown:true })
+              }).then(r=>{ if(!r.ok) throw new Error('Failed'); return r.json(); });
+              msg.textContent = 'Stopping BOSminer…';
+            } else if (act === 'resume') {
+              await fetch(`${API_BASE}/api/power-target?miner=${idx}`,{
+                method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ resume:true })
+              }).then(r=>{ if(!r.ok) throw new Error('Failed'); return r.json(); });
+              msg.textContent = 'Resuming BOSminer…';
+            }
+            // refresh row soon after action
+            setTimeout(loadMiners, 1200);
+          }catch(err){ msg.textContent = String(err.message || err); }
+        });
+      });
+      renderAuto();
+    }
+
+    async function loadMiners(){
+      try{
+        const res = await fetch(`${API_BASE}/api/miners`, { cache:'no-store' });
+        if(!res.ok) throw new Error('Miners API error');
+        const data = await res.json();
+        renderMiners(data);
+      }catch(err){
+        // show empty grid message on failure
+        if(!minersGrid.dataset.initialized){
+          minersGrid.innerHTML = `<div class="miner-card"><div class="miner-head"><div class="miner-host">No data</div><span class="pill bad">Error</span></div><div class="row">${String(err.message || err)}</div></div>`;
+        }
+      } finally {
+        minersGrid.dataset.initialized = '1';
+      }
+    }
+
+    // Auto toggle handlers
+    $('auto-toggle').addEventListener('change', async (e)=>{
+      try{
+        const enable = e.target.checked;
+        const res = await fetch(`${API_BASE}/api/auto-control`,{
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enable })
+        });
+        if(!res.ok) throw new Error('Failed to update auto control');
+        const data = await res.json();
+        auto.enabled = !!data.enabled;
+        renderAuto();
+      }catch(err){
+        e.target.checked = !e.target.checked; // revert
+        alert('Auto control toggle failed: ' + (err.message || err));
+      }
+    });
+
+    // Quick set for all miners (when auto is off)
+    document.addEventListener('click', async (e)=>{
+      const btn = e.target.closest('button[data-all]');
+      if(!btn) return;
+      if (auto.enabled) { alert('Disable Auto to use quick set for all.'); return; }
+      const watts = Number(btn.getAttribute('data-all'));
+      if (!isFinite(watts)) return;
+      try{
+        // fire requests sequentially to be gentle
+        for (let i=0;i<minerState.length;i++){
+          await fetch(`${API_BASE}/api/power-target?miner=${i}`,{
+            method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ watts: watts===100?100:watts, shutdown: watts===0?true:undefined })
+          });
+        }
+      }catch(err){
+        console.error('Quick set all failed', err);
+      } finally {
+        setTimeout(loadMiners, 1200);
+      }
+    });
+
+    // Socket for Victron live and Auto control updates
+    let lastSocketUpdate = 0;
+    try{
+      const socket = io(API_BASE, { transports:['websocket'], timeout: 8000 });
+      socket.on('connect', ()=> setConn('connected'));
+      socket.on('reconnect_attempt', ()=> setConn('reconnecting'));
+      socket.on('disconnect', ()=> setConn('disconnected'));
+      socket.on('data_update', (payload)=>{ lastSocketUpdate = Date.now(); renderPower(payload); });
+      socket.on('auto_control_update', (payload)=>{ 
+        if (payload && typeof payload === 'object'){
+          auto.enabled = !!payload.enabled;
+          auto.lastAvgGridPower = payload.lastAvgGridPower;
+          auto.perMinerTargets = payload.perMinerTargets || {};
+          renderAuto();
+        }
+      });
+    }catch{ /* ignore */ }
+
+    // Fallback polling for Victron if socket idle
+    async function pollVenus(){
+      try{
+        if (Date.now() - lastSocketUpdate < 7000) return; // socket is fresh
+        const res = await fetch(`${API_BASE}/api/venus`, { cache:'no-store' });
+        if(!res.ok) throw new Error('Venus API error');
+        const data = await res.json();
+        renderPower(data);
+      }catch{ /* ignore */ }
+    }
+
+    // Initial fetch for Auto state
+    async function loadAuto(){
+      try{
+        const res = await fetch(`${API_BASE}/api/auto-control`, { cache:'no-store' });
+        if (!res.ok) throw new Error('Auto API error');
+        const data = await res.json();
+        auto.enabled = !!data.enabled;
+        auto.lastAvgGridPower = data.lastAvgGridPower;
+        auto.perMinerTargets = data.perMinerTargets || {};
+        renderAuto();
+      }catch(err){ /* ignore */ }
+    }
+
+    // Kick off loops
+    loadAuto();
+    loadMiners();
+    setInterval(loadMiners, 5000);
+    pollVenus();
+    setInterval(pollVenus, 5000);
+  </script>
+</body>
+</html>
