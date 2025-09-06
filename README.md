@@ -133,3 +133,5 @@ Ideas:
 | Immediate shutdowns | Thresholds too tight; increase shutdown minutes or widen deficit threshold. |
 | Resume never triggers | Surplus not sustained long enough or miners already running. |
 
+<img width="1224" height="736" alt="image" src="https://github.com/user-attachments/assets/19b61f61-959b-46d9-8a00-daec5a1e08f3" />
+
