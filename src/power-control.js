@@ -334,7 +334,7 @@ const PER_MINER_MIN_APPLY_INTERVAL_MS = 60000; // ms
 
 // Discrete two-miner combo control
 const DISCRETE_MODE = true; // enable combo-based control for 2 miners
-const ALLOWED_LEVELS = [0, 800, 1000, 1420]; // updated: replaced 1000 with 1200
+const ALLOWED_LEVELS = [0, 800, 1000, 1420];
 const ENTER_MARGIN = 0; // no step-up margin (direct jumps allowed)
 const EXIT_MARGIN = 0;  // no step-down hysteresis (can jump directly)
 // Removed STRICT_STEPS logic (direct selection now)
