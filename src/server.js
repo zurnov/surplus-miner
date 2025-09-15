@@ -3,10 +3,23 @@ const express = require('express');
 const cors = require('cors');
 const net = require('net');
 const path = require('path');
+const { FileLogger } = require('./utils/file-logger');
+
+// Initialize file logger
+const LOG_TO_CONSOLE = /^true$/i.test(process.env.LOG_TO_CONSOLE || 'true');
+const logger = new FileLogger({ dir: process.env.LOG_DIR || path.join(process.cwd(), 'logs'), prefix: 'server', console: LOG_TO_CONSOLE });
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Request log middleware (lightweight)
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    logger.info(`${req.method} ${req.originalUrl} ${res.statusCode}`);
+  });
+  next();
+});
 
 // Serve static UI
 app.use(express.static(path.join(__dirname, '../public')));
@@ -52,7 +65,7 @@ function papiRequest(command) {
     client.setTimeout(8000);
 
     client.on('timeout', () => { client.destroy(new Error('Socket timeout')); });
-    client.on('error', (err) => settle(err));
+    client.on('error', (err) => { logger.error('papi socket error', { message: err.message }); settle(err); });
 
     client.connect(MINER_PORT, MINER_HOST, () => {
       let payload = JSON.stringify({ command });
@@ -72,8 +85,8 @@ function papiRequest(command) {
       } catch (e) {
         const parts = splitTopLevelJSONObjects(cleaned);
         if (parts.length > 1) return settle(null, { parts });
-        // Surface a short preview for diagnostics in server logs
-        console.error('[papi] Invalid JSON preview:', cleaned.slice(0, 200));
+        // Surface a short preview for diagnostics in logs
+        logger.warn('[papi] Invalid JSON preview', cleaned.slice(0, 200));
         return settle(new Error('Invalid JSON from miner'));
       }
     };
@@ -150,6 +163,7 @@ app.get('/api/version', async (req, res) => {
     const resp = await papiRequest('version');
     res.json(resp);
   } catch (e) {
+    logger.error('/api/version failed', { message: e.message });
     res.status(502).json({ error: e.message });
   }
 });
@@ -180,6 +194,7 @@ app.get('/api/raw', async (req, res) => {
     const cleaned = cleanResponse(data);
     res.json({ length: cleaned.length, preview: cleaned.slice(0, 500), full: cleaned.slice(0, 5000) });
   } catch (e) {
+    logger.error('/api/raw failed', { message: e.message });
     res.status(502).json({ error: e.message });
   }
 });
@@ -205,6 +220,7 @@ app.get('/api/overview', async (req, res) => {
     const out = { summary: [pick(summary)], devs: [pick(devs)], pools: [pick(pools)], id: 1 };
     res.json(out);
   } catch (e) {
+    logger.error('/api/overview failed', { message: e.message });
     res.status(502).json({ error: e.message });
   }
 });
@@ -215,6 +231,7 @@ app.get('/api/estats', async (req, res) => {
     if (resp && resp.parts) return res.json(JSON.parse(resp.parts[0]));
     res.json(resp);
   } catch (e) {
+    logger.error('/api/estats failed', { message: e.message });
     res.status(502).json({ error: e.message });
   }
 });
@@ -234,6 +251,7 @@ app.get('/api/power', async (req, res) => {
 
     res.json(power || { total: null, per_chain: [] });
   } catch (e) {
+    logger.error('/api/power failed', { message: e.message });
     res.status(502).json({ error: e.message });
   }
 });
@@ -244,4 +262,7 @@ app.get('/', (req, res) => {
 });
 
 const FRONTEND_PORT = process.env.FRONTEND_PORT || 3030;
-app.listen(FRONTEND_PORT, () => console.log(`Server running on http://localhost:${FRONTEND_PORT}`));
+app.listen(FRONTEND_PORT, () => {
+  logger.info(`Server running on http://localhost:${FRONTEND_PORT}`);
+  console.log(`Server running on http://localhost:${FRONTEND_PORT}`);
+});

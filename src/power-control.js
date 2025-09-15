@@ -5,7 +5,16 @@ const mqtt = require('mqtt');
 const http = require('http');
 const { Server } = require('socket.io');
 const net = require('net');
+const { FileLogger } = require('./utils/file-logger');
 require('dotenv').config();
+
+// Initialize file logger
+const LOG_TO_CONSOLE = /^true$/i.test(process.env.LOG_TO_CONSOLE || 'true');
+const logger = new FileLogger({ 
+  dir: process.env.LOG_DIR || require('path').join(process.cwd(), 'logs'), 
+  prefix: 'power-control', 
+  console: LOG_TO_CONSOLE 
+});
 
 const app = express();
 const corsOptions = {
@@ -33,12 +42,15 @@ function getMinerHost(req) {
 
 const VENUS_ID = 'c0619ab8cc67';
 
-console.log('Connecting to MQTT broker...');
+logger.info('Connecting to MQTT broker...');
 const mqttClient = mqtt.connect({
   host: '192.168.0.50',
   port: 1883,
   protocol: 'mqtt',
+  reconnectPeriod: 5000, // Auto-reconnect
 });
+
+let keepAliveInterval = null; // Track interval for proper cleanup
 
 let latestData = {
   power: { l1: 0, l2: 0, l3: 0 },
@@ -67,18 +79,22 @@ const REQUEST_LOG = /^true$/i.test(process.env.REQUEST_LOG || '');
 const REQUEST_LOG_IGNORE_PREFIX = (process.env.REQUEST_LOG_IGNORE_PREFIX || '/api/miners').split(',').map(s => s.trim()).filter(Boolean);
 
 mqttClient.on('connect', () => {
-  console.log('Connected to MQTT broker');
+  logger.info('Connected to MQTT broker');
   mqttClient.subscribe(topics, (err) => {
     if (!err) {
-      console.log(`Subscribed to topics: ${topics.join(', ')}`);
+      logger.info(`Subscribed to topics: ${topics.join(', ')}`);
     } else {
-      console.error(`Subscription error: ${err}`);
-      mqttClient.end();
+      logger.error('Subscription error', { error: err.message });
+      return; // Don't end client, let it auto-reconnect
     }
   });
-  setInterval(() => {
-    mqttClient.publish(`victron/R/${VENUS_ID}/system/0/Serial`, '');
-    // console.log('Sent keep-alive to victron/R/' + VENUS_ID + '/system/0/Serial');
+  
+  // Clear any existing interval and create new one
+  if (keepAliveInterval) clearInterval(keepAliveInterval);
+  keepAliveInterval = setInterval(() => {
+    if (mqttClient.connected) {
+      mqttClient.publish(`victron/R/${VENUS_ID}/system/0/Serial`, '');
+    }
   }, 30000);
 });
 
@@ -99,7 +115,7 @@ mqttClient.on('message', (topic, message) => {
       else if (metric.endsWith('L3/Power')) latestData.consumption.l3 = value;
     }
   } catch (e) {
-    console.error(`Could not parse message on topic ${topic}: ${message.toString()}`);
+    logger.warn('Could not parse MQTT message', { topic, message: message.toString(), error: e.message });
   }
 });
 
@@ -127,18 +143,26 @@ setInterval(() => {
 }, 5000);
 
 mqttClient.on('error', (err) => {
-  console.error(`Connection error: ${err}`);
-  mqttClient.end();
+  logger.error('MQTT connection error', { error: err.message });
+  // Don't call mqttClient.end() - let it auto-reconnect
 });
 
 mqttClient.on('close', () => {
-  console.log('Connection to MQTT broker closed');
+  logger.info('Connection to MQTT broker closed');
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
+});
+
+mqttClient.on('reconnect', () => {
+  logger.info('Reconnecting to MQTT broker...');
 });
 
 // Optional request logging (disabled by default). To enable: REQUEST_LOG=true
 app.use((req, res, next) => {
   if (REQUEST_LOG && !REQUEST_LOG_IGNORE_PREFIX.some(p => p && req.url.startsWith(p))) {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} from ${req.headers.origin || 'unknown'}`);
+    logger.info(`${req.method} ${req.url}`, { origin: req.headers.origin || 'unknown' });
   }
   next();
 });
@@ -382,13 +406,13 @@ function applyMinerPower(host, logicalTarget){
       const sshCmd = `ssh root@${host} "/etc/init.d/bosminer stop"`;
       exec(sshCmd, (err, stdout, stderr) => {
         if (err) {
-          console.error(`[AUTO] Stop error on ${host}: ${stderr || err.message}`);
+          logger.error(`Stop error on ${host}`, { error: stderr || err.message });
           return resolve({ host, error: stderr || err.message });
         }
         minerStopped[host] = true;
         lastAutoTargets[host] = 0;
         lastApplyTs[host] = now;
-        console.log(`[AUTO] Set ${host} -> OFF (was ${prev}W)`);
+        logger.info(`Set ${host} -> OFF (was ${prev}W)`);
         resolve({ host, applied: 0 });
       });
       return;
@@ -406,12 +430,12 @@ function applyMinerPower(host, logicalTarget){
 
     exec(sshCmd, (err, stdout, stderr) => {
       if (err) {
-        console.error(`[AUTO] SSH error on ${host}: ${stderr || err.message}`);
+        logger.error(`SSH error on ${host}`, { error: stderr || err.message });
         return resolve({ host, error: stderr || err.message });
       }
       lastAutoTargets[host] = logicalTarget;
       lastApplyTs[host] = now;
-      console.log(`[AUTO] Set ${host} -> ${logicalTarget}W (was ${prev}W${prev===0?' OFF':''})`);
+      logger.info(`Set ${host} -> ${logicalTarget}W (was ${prev}W${prev===0?' OFF':''})`);
       resolve({ host, applied: logicalTarget });
     });
   });
@@ -436,10 +460,8 @@ async function startAllMiners(){
 }
 
 function autoSetMinerPower() {
-  if (!autoControlEnabled) {
-    console.log(`[AUTO] Auto-control is disabled.`);
-    return;
-  }
+  if (!autoControlEnabled) return;
+  
   const gridPower = latestData.power.l1 + latestData.power.l2 + latestData.power.l3; // positive = importing, negative = exporting
   gridPowerHistory.push(gridPower);
   if (gridPowerHistory.length > MOVING_AVG_WINDOW) gridPowerHistory.shift();
@@ -447,14 +469,11 @@ function autoSetMinerPower() {
   const surplusW = Math.max(0, -avgGridPower);
   const now = Date.now();
   // Only act every interval
-  if (now - lastAutoSet < SURPLUS_CHECK_INTERVAL) {
-    console.log(`[AUTO] Waiting for next interval. Last set: ${new Date(lastAutoSet).toISOString()}`);
-    return;
-  }
+  if (now - lastAutoSet < SURPLUS_CHECK_INTERVAL) return;
   lastAutoSet = now;
 
   if (!MINER_HOSTS.length) {
-    console.warn('[AUTO] No miners configured in MINER_HOSTS');
+    logger.warn('No miners configured in MINER_HOSTS');
     return;
   }
 
@@ -469,14 +488,51 @@ function autoSetMinerPower() {
   if (minersAreShutDown) {
     if (resumeEnabled) {
       const resumeCond = gridPower < (GRID_SURPLUS_THRESHOLD - HYSTERESIS); // instantaneous surplus export sustained
+      const surplusAmount = Math.max(0, -gridPower);
+      const thresholdWithHysteresis = GRID_SURPLUS_THRESHOLD - HYSTERESIS;
+      
+      logger.debug(`Resume evaluation: gridPower=${gridPower.toFixed(1)}W, avgGridPower=${avgGridPower.toFixed(1)}W, surplus=${surplusAmount.toFixed(1)}W, threshold=${thresholdWithHysteresis}W, condition=${resumeCond}`, {
+        instantGridPower: gridPower.toFixed(1),
+        movingAvgGridPower: avgGridPower.toFixed(1),
+        surplusDetected: surplusAmount.toFixed(1),
+        resumeThreshold: thresholdWithHysteresis,
+        conditionMet: resumeCond,
+        requiredMinutes: AUTO_RESUME_MINUTES,
+        currentlyHolding: !!surplusHoldStartTs
+      });
+      
       if (resumeCond) {
         if (!surplusHoldStartTs) {
           surplusHoldStartTs = now;
-          console.log(`[AUTO] Resume arming: sustained surplus detected. Waiting ${AUTO_RESUME_MINUTES} min...`);
+          logger.info(`Resume arming: sustained surplus detected (${surplusAmount.toFixed(1)}W export). Waiting ${AUTO_RESUME_MINUTES} min before resume...`, {
+            gridPower: gridPower.toFixed(1),
+            avgGridPower: avgGridPower.toFixed(1),
+            surplusAmount: surplusAmount.toFixed(1),
+            threshold: thresholdWithHysteresis,
+            requiredMinutes: AUTO_RESUME_MINUTES,
+            holdStartTime: new Date(surplusHoldStartTs).toLocaleTimeString()
+          });
         }
         const heldMs = now - (surplusHoldStartTs || now);
+        const heldMinutes = heldMs / 60000;
+        const remainingMinutes = Math.max(0, AUTO_RESUME_MINUTES - heldMinutes);
+        const progressPercent = Math.min(100, (heldMinutes / AUTO_RESUME_MINUTES) * 100);
+        
+        logger.debug(`Resume hold progress: held=${heldMinutes.toFixed(2)}min (${progressPercent.toFixed(1)}%), remaining=${remainingMinutes.toFixed(2)}min, surplus=${surplusAmount.toFixed(1)}W`, {
+          heldDurationMinutes: heldMinutes.toFixed(2),
+          remainingMinutes: remainingMinutes.toFixed(2),
+          progressPercent: progressPercent.toFixed(1),
+          currentSurplus: surplusAmount.toFixed(1),
+          willTriggerIn: remainingMinutes > 0 ? `${remainingMinutes.toFixed(2)} minutes` : 'READY'
+        });
+        
         if (heldMs >= AUTO_RESUME_MINUTES * 60000) {
-          console.log('[AUTO] Auto-resume: starting all miners.');
+          logger.info(`Auto-resume triggered: surplus held for ${heldMinutes.toFixed(2)} minutes. Starting all miners.`, {
+            heldDurationMinutes: heldMinutes.toFixed(2),
+            finalSurplus: surplusAmount.toFixed(1),
+            avgGridPower: avgGridPower.toFixed(1),
+            triggerTime: new Date().toLocaleTimeString()
+          });
           startAllMiners().then(() => {
             minersAreShutDown = false;
             surplusHoldStartTs = null;
@@ -484,12 +540,37 @@ function autoSetMinerPower() {
             // Reset targets to MIN_POWER so control can ramp up cleanly next cycles
             for (const h of MINER_HOSTS) { lastAutoTargets[h] = MIN_POWER; lastApplyTs[h] = 0; }
             io.emit('auto_control_update', { enabled: autoControlEnabled, autoEvent: 'resumed', lastAvgGridPower: avgGridPower });
+            logger.info('Auto-resume completed: all miners started, ready for power targeting');
           });
         }
-      } else if (surplusHoldStartTs) {
-        console.log('[AUTO] Resume condition cleared.');
-        surplusHoldStartTs = null;
+      } else {
+        // Resume condition not met
+        logger.debug(`Resume condition NOT met: gridPower=${gridPower.toFixed(1)}W >= threshold=${thresholdWithHysteresis}W`, {
+          gridPower: gridPower.toFixed(1),
+          threshold: thresholdWithHysteresis,
+          deficit: (gridPower - thresholdWithHysteresis).toFixed(1),
+          conditionMet: false
+        });
+        
+        if (surplusHoldStartTs) {
+          const heldMs = now - surplusHoldStartTs;
+          const heldMinutes = heldMs / 60000;
+          const remainingMinutes = AUTO_RESUME_MINUTES - heldMinutes;
+          logger.info(`Resume condition cleared: surplus lost after ${heldMinutes.toFixed(2)} minutes (${remainingMinutes.toFixed(2)}min remaining)`, {
+            gridPower: gridPower.toFixed(1),
+            heldDurationMinutes: heldMinutes.toFixed(2),
+            remainingMinutes: remainingMinutes.toFixed(2),
+            wasAtProgress: `${Math.min(100, (heldMinutes / AUTO_RESUME_MINUTES) * 100).toFixed(1)}%`
+          });
+          surplusHoldStartTs = null;
+        }
       }
+    } else {
+      logger.debug('Resume disabled (AUTO_RESUME_MINUTES=0), miners will remain shut down', {
+        resumeEnabled: false,
+        autoResumeMinutes: AUTO_RESUME_MINUTES,
+        minersShutDown: true
+      });
     }
     // While shut down, skip target application
     return;
@@ -504,11 +585,11 @@ function autoSetMinerPower() {
     if (shutdownCond) {
       if (!noSurplusStartTs) {
         noSurplusStartTs = now;
-        console.log(`[AUTO] Shutdown arming: no-surplus/deficit detected. Waiting ${AUTO_SHUTDOWN_MINUTES} min...`);
+        logger.info(`Shutdown arming: no-surplus/deficit detected. Waiting ${AUTO_SHUTDOWN_MINUTES} min...`);
       }
       const heldMs = now - (noSurplusStartTs || now);
       if (heldMs >= AUTO_SHUTDOWN_MINUTES * 60000) {
-        console.log('[AUTO] Auto-shutdown: stopping all miners.');
+        logger.info('Auto-shutdown: stopping all miners.');
         shutdownAllMiners().then(() => {
           minersAreShutDown = true;
           noSurplusStartTs = null;
@@ -518,7 +599,7 @@ function autoSetMinerPower() {
         return; // Do not proceed with targeting after issuing shutdown
       }
     } else if (noSurplusStartTs) {
-      console.log('[AUTO] Shutdown condition cleared.');
+      logger.info('Shutdown condition cleared.');
       noSurplusStartTs = null;
     }
   }
@@ -562,7 +643,7 @@ function autoSetMinerPower() {
     }
     if (remaining > maxCapacity) remaining = maxCapacity; // cap at available headroom
 
-    console.log(`[AUTO] Surplus ${(-avgGridPower).toFixed(0)}W (avg). Distributing +${remaining}W across ${hostsFair.length} miners.`);
+    logger.debug(`Surplus ${(-avgGridPower).toFixed(0)}W (avg). Distributing +${remaining}W across ${hostsFair.length} miners.`);
 
     for (const host of hostsFair) {
       if (remaining <= 0) break;
@@ -583,7 +664,7 @@ function autoSetMinerPower() {
     for (const h of hostsByPower) reducibleTotal += Math.max(0, (lastAutoTargets[h]||MIN_POWER) - MIN_POWER);
     if (needReduce > reducibleTotal) needReduce = reducibleTotal;
 
-    console.log(`[AUTO] Deficit ${avgGridPower.toFixed(0)}W (avg). Reducing −${needReduce}W across ${hostsFair.length} miners.`);
+    logger.debug(`Deficit ${avgGridPower.toFixed(0)}W (avg). Reducing −${needReduce}W across ${hostsFair.length} miners.`);
 
     for (const host of hostsByPower) {
       if (needReduce <= 0) break;
@@ -595,7 +676,7 @@ function autoSetMinerPower() {
       needReduce -= (cur - next);
     }
   } else {
-    console.log(`[AUTO] Within hysteresis. Avg grid: ${avgGridPower.toFixed(1)}W. No changes.`);
+    logger.debug(`Within hysteresis. Avg grid: ${avgGridPower.toFixed(1)}W. No changes.`);
   }
 
   if (actions.length) {
@@ -606,7 +687,7 @@ function autoSetMinerPower() {
         lastAvgGridPower: avgGridPower,
         perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h=>[h, lastAutoTargets[h]]))
       });
-      console.log(`[AUTO] Applied: ${summary}`);
+      logger.debug(`Applied: ${summary}`);
     });
   } else {
     io.emit('auto_control_update', {
@@ -620,12 +701,17 @@ setInterval(autoSetMinerPower, SURPLUS_CHECK_INTERVAL);
 
 const PORT = process.env.PORT || 3099;
 server.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  logger.info(`Server is running on http://localhost:${PORT}`);
 });
 
 process.on('SIGINT', () => {
-  console.log('Disconnecting from MQTT broker...');
+  logger.info('Disconnecting from MQTT broker...');
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
   mqttClient.end();
+  logger.close();
   process.exit();
 });
 
@@ -638,8 +724,8 @@ app.post('/api/auto-control', (req, res) => {
       const cfg = `interval=${SURPLUS_CHECK_INTERVAL/1000}s, window=${MOVING_AVG_WINDOW}, shutdown=${AUTO_SHUTDOWN_MINUTES}m, resume=${AUTO_RESUME_MINUTES}m`;
       const avg = getMovingAvg(gridPowerHistory);
       const targetsStr = MINER_HOSTS.map(h=>`${h}:${(lastAutoTargets[h] || MIN_POWER)}W`).join(', ') || 'none';
-      console.log(`[AUTO] Auto-control ${autoControlEnabled ? 'ENABLED' : 'DISABLED'} (${cfg}). Miners: ${MINER_HOSTS.join(', ') || 'none'}`);
-      console.log(`[AUTO] Status at toggle: avgGrid=${avg.toFixed(1)}W, targets -> ${targetsStr}`);
+      logger.info(`Auto-control ${autoControlEnabled ? 'ENABLED' : 'DISABLED'}`, { config: cfg, miners: MINER_HOSTS.join(', ') || 'none' });
+      logger.info(`Status at toggle: avgGrid=${avg.toFixed(1)}W, targets -> ${targetsStr}`);
     } catch (_) {}
 
     io.emit('auto_control_update', {
@@ -800,8 +886,8 @@ function papiRequest(command, host) {
       if (settled) return; 
       settled = true; 
       if (err) {
-        console.log(`[PAPI] Error for ${command} from ${host}: ${err.message}`);
-        reject(err);
+        logger.error('papi socket error', { command, host, error: err.message });
+        settle(err);
       } else {
         
         resolve(val);
@@ -812,11 +898,11 @@ function papiRequest(command, host) {
     client.setTimeout(8000);
 
     client.on('timeout', () => { 
-      console.log(`[PAPI] Timeout for ${command} from ${host}`);
+      logger.warn('papi timeout', { command, host });
       client.destroy(new Error('Socket timeout')); 
     });
     client.on('error', (err) => {
-      console.log(`[PAPI] Socket error for ${command} from ${host}: ${err.message}`);
+      logger.warn('papi socket error', { command, host, error: err.message });
       settle(err);
     });
 
@@ -840,7 +926,7 @@ function papiRequest(command, host) {
       } catch (e) {
         const parts = splitTopLevelJSONObjects(cleaned);
         if (parts.length > 1) return settle(null, { parts });
-        console.error('[papi] Invalid JSON preview:', cleaned.slice(0, 200));
+        logger.warn('papi invalid JSON preview', { command, host, preview: cleaned.slice(0, 200) });
         return settle(new Error('Invalid JSON from miner'));
       }
     };
@@ -911,13 +997,13 @@ function pickBestCombo(surplusW){
 // --- Startup: detect existing miner states (running / stopped + current power_target) ---
 async function detectInitialMinerStates(){
   if (!MINER_HOSTS.length) return;
-  console.log('[AUTO] Detecting initial miner states...');
+  logger.info('Detecting initial miner states...');
   const tasks = MINER_HOSTS.map(host => new Promise(resolve => {
     // Use single quotes outside and carefully escape inner single quotes for sed/grep
     const sshCmd = `ssh root@${host} 'if /etc/init.d/bosminer status >/dev/null 2>&1 || pgrep -x bosminer >/dev/null; then state=RUNNING; else state=STOPPED; fi; pt=$(grep -E "^[[:space:]]*power_target[[:space:]]*=" /etc/bosminer.toml 2>/dev/null | head -1 | sed -E "s/.*=[[:space:]]*([0-9]+).*/\\1/"); echo "$state $pt"'`;
     exec(sshCmd, (err, stdout, stderr) => {
       if (err) {
-        console.warn(`[AUTO] Initial detect failed for ${host}: ${stderr || err.message}`);
+        logger.warn(`Initial detect failed for ${host}`, { error: stderr || err.message });
         return resolve({ host, state: 'UNKNOWN', power: 0 });
       }
       const out = (stdout || '').trim();
@@ -945,7 +1031,7 @@ async function detectInitialMinerStates(){
         minerStopped[r.host] = true;
         if (!Number.isFinite(lastAutoTargets[r.host])) lastAutoTargets[r.host] = 0;
       }
-      console.log(`[AUTO] ${r.host} -> ${r.state}${Number.isFinite(r.power) ? ` (power_target ~${r.power}W)` : ''}`);
+      logger.info(`${r.host} -> ${r.state}${Number.isFinite(r.power) ? ` (power_target ~${r.power}W)` : ''}`);
     }
     minersAreShutDown = runningCount === 0; // if all stopped consider globally shut down
     io.emit('auto_control_update', {
@@ -954,7 +1040,7 @@ async function detectInitialMinerStates(){
       perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h=>[h, lastAutoTargets[h] || 0]))
     });
   } catch (e) {
-    console.warn('[AUTO] Initial detection error:', e.message);
+    logger.warn('Initial detection error', { error: e.message });
   }
 }
 

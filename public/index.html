@@ -3,14 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0e1116" />
   <title>Surplus Miner Control</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
   <style>
+    /* Accessibility / Theming additions */
     :root{
       --bg:#0e1116; --panel:#141824; --muted:#8b91a6; --fg:#e9ecf3; --accent:#6aa0ff;
       --ok:#2ecc71; --warn:#f1c40f; --bad:#e74c3c; --line:#222637; --chip:#1a2031;
+      --space-xs:4px; --space-s:8px; --space:12px; --space-l:16px; --radius:14px;
+      --transition: .18s cubic-bezier(.4,.2,.2,1);
     }
     *{ box-sizing:border-box }
     html,body{ height:100% }
@@ -31,8 +35,8 @@
     .dot{ width:8px; height:8px; border-radius:50%; background:#777 }
     .dot.ok{ background:var(--ok) } .dot.warn{ background:var(--warn) } .dot.bad{ background:var(--bad) }
 
-    main{ max-width:1200px; margin:18px auto 28px; padding:0 16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px }
-    .card{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; box-shadow:0 6px 26px rgba(0,0,0,.22) }
+    main{ max-width:1200px; margin:18px auto 28px; padding:0 16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:12px }
+    .card{ background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:14px; box-shadow:0 6px 26px rgba(0,0,0,.22) }
     /* Wider auto control card: span 2 columns on wide screens */
     .card.auto-card{ grid-column: span 2; min-width:560px; }
     @media (max-width: 1000px){
@@ -43,9 +47,9 @@
     .auto-card .row .kv[title] button{ white-space:nowrap; }
 
     .label{ color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.6px }
-    .value{ font-size:26px; font-weight:600; margin-top:6px }
-    .row{ display:flex; align-items:center; gap:10px; margin-top:10px; color:var(--muted); flex-wrap:wrap }
-    .kv{ display:flex; align-items:center; gap:6px; background:var(--chip); border:1px solid var(--line); padding:6px 10px; border-radius:8px; font-size:12px }
+    .value{ font-size:24px; font-weight:600; margin-top:4px }
+    .row{ display:flex; align-items:center; gap:8px; margin-top:8px; color:var(--muted); flex-wrap:wrap }
+    .kv{ display:flex; align-items:center; gap:6px; background:var(--chip); border:1px solid var(--line); padding:5px 9px; border-radius:8px; font-size:12px }
     .right{ margin-left:auto }
     .pill{ padding:4px 8px; border-radius:999px; border:1px solid var(--line); font-size:12px; color:var(--muted) }
     .pill.ok{ color:var(--ok); border-color:#224b35; background:#12261c }
@@ -54,7 +58,7 @@
 
     /* Miners grid */
     .miners{ grid-column:1 / -1 }
-    .miners-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-top:12px }
+    .miners-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:12px; margin-top:12px }
     .miner-card{ padding:16px; border-radius:12px; background:var(--panel); border:1px solid var(--line) }
     .miner-head{ display:flex; align-items:center; gap:10px; margin-bottom:10px }
     .miner-host{ font-weight:600 }
@@ -90,13 +94,46 @@
 
     footer{ max-width:1200px; margin:8px auto 24px; padding:0 16px; color:var(--muted); font-size:12px }
     a{ color:var(--accent); text-decoration:none }
+
+    /* Performance mini cards */
+    .mini-note{ font-size:11px; color:var(--muted); margin-top:2px }
+    .trend-up{ color:var(--ok); }
+    .trend-down{ color:var(--bad); }
+
+    /* Toast system */
+    .toasts{ position:fixed; bottom:18px; right:18px; display:flex; flex-direction:column; gap:10px; z-index:50; max-width:320px; }
+    .toast{ background:rgba(28,34,48,.92); border:1px solid var(--line); padding:10px 14px; border-radius:10px; font-size:13px; display:flex; align-items:center; gap:10px; box-shadow:0 4px 18px -4px rgba(0,0,0,.5); opacity:0; transform:translateY(6px); animation:toast-in .35s var(--transition) forwards; }
+    .toast.ok{ border-color:#234f38; background:#16251d; }
+    .toast.warn{ border-color:#4b4522; background:#262112; }
+    .toast.bad{ border-color:#4b2222; background:#261212; }
+    .toast button{ background:transparent; border:none; color:var(--muted); font-size:16px; padding:2px 4px; cursor:pointer; }
+    @keyframes toast-in{ to{ opacity:1; transform:translateY(0) } }
+    @keyframes toast-out{ to{ opacity:0; transform:translateY(6px) } }
+
+    /* Focus visibility */
+    :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce){
+      *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition:none !important }
+    }
+    @media (max-width:640px){
+      main{ grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); }
+    }
+    /* High contrast mode support */
+    @media (forced-colors: active){
+      .card, .kv, .metric, input, button{ forced-color-adjust:auto; }
+    }
+    /* Focus ring for cards interactive areas */
+    .miner-card:focus-within{ box-shadow:0 0 0 2px #2b5cff55; }
+    /* Efficiency & absorption metric styling reuse existing classes */
   </style>
 </head>
 <body>
   <header>
     <div class="topbar">
-      <div class="brand"> Surplus Miner Control</div>
-      <div class="chip" id="conn-chip"><span class="dot" id="conn-dot"></span><span id="conn-text">Connecting…</span></div>
+      <h1 class="brand" style="margin:0; font-size:15px">Surplus Miner Control</h1>
+      <div class="chip" id="conn-chip" role="status" aria-live="polite"><span class="dot" id="conn-dot"></span><span id="conn-text">Connecting…</span></div>
       <div class="chip">Last update: <span id="last-update" style="margin-left:6px">—</span></div>
       <div class="spacer"></div>
       <div class="chip">Backend: <span id="backend-url" style="margin-left:6px"></span></div>
@@ -106,9 +143,9 @@
   <main>
     <!-- Grid Power -->
     <section class="card">
-      <div class="label">Grid Power</div>
-      <div class="value" id="grid-total">—</div>
-      <div class="row">
+      <h2 class="label" id="grid-power-label">Grid Power</h2>
+      <div class="value" id="grid-total" aria-labelledby="grid-power-label">—</div>
+      <div class="row" aria-label="Per phase grid power">
         <div class="kv">L1: <span id="grid-l1">—</span></div>
         <div class="kv">L2: <span id="grid-l2">—</span></div>
         <div class="kv">L3: <span id="grid-l3">—</span></div>
@@ -118,50 +155,91 @@
 
     <!-- Consumption -->
     <section class="card">
-      <div class="label">Consumption</div>
-      <div class="value" id="cons-total">—</div>
-      <div class="row">
+      <h2 class="label" id="consumption-label">Consumption</h2>
+      <div class="value" id="cons-total" aria-labelledby="consumption-label">—</div>
+      <div class="row" aria-label="Per phase consumption">
         <div class="kv">L1: <span id="cons-l1">—</span></div>
         <div class="kv">L2: <span id="cons-l2">—</span></div>
         <div class="kv">L3: <span id="cons-l3">—</span></div>
       </div>
     </section>
 
+    <!-- Total Hashrate -->
+    <section class="card" id="card-total-hash">
+      <h2 class="label" id="hashrate-label">Total Hashrate</h2>
+      <div class="value" id="total-ths" aria-labelledby="hashrate-label">—</div>
+      <div class="row">
+        <div class="kv">Miners: <span id="miners-count">—</span></div>
+      </div>
+    </section>
+
+    <!-- Miner Consumption -->
+    <section class="card" id="card-total-consumption">
+      <h2 class="label" id="miner-consumption-label">Miner Consumption</h2>
+      <div class="value" id="total-miner-power" aria-labelledby="miner-consumption-label">—</div>
+      <div class="row">
+        <div class="kv">Avg / Miner: <span id="avg-miner-power">—</span></div>
+      </div>
+    </section>
+
+    <!-- Efficiency -->
+    <section class="card" id="card-efficiency">
+      <h2 class="label" id="eff-label">Efficiency</h2>
+      <div class="value" id="eff-ths-kw" aria-labelledby="eff-label">—</div>
+      <div class="row">
+        <div class="kv" title="Joules per Terahash (lower is better)">J/TH: <span id="eff-jth">—</span></div>
+        <div class="kv" title="TH/s per kW (higher is better)">TH/kW: <span id="eff-thkw">—</span></div>
+      </div>
+    </section>
+
+    <!-- Surplus Absorption -->
+    <section class="card" id="card-absorption">
+      <h2 class="label" id="absorb-label">Surplus Absorption</h2>
+      <div class="value" id="absorption-percent" aria-labelledby="absorb-label">—</div>
+      <div class="row">
+        <div class="kv" title="Estimated surplus being utilized by miners">Absorbed: <span id="absorption-watts">—</span></div>
+        <div class="kv" title="Current export (if negative grid power)">Export: <span id="export-watts">—</span></div>
+      </div>
+    </section>
+
     <!-- Auto Control -->
     <section class="card auto-card">
-      <div class="label">Auto Control</div>
+      <h2 class="label" id="auto-label">Auto Control</h2>
       <div class="row" style="margin-top:8px">
-        <label class="switch" title="Enable/disable automatic solar surplus control">
-          <input type="checkbox" id="auto-toggle" />
+        <label class="switch" title="Enable or disable automatic solar surplus control">
+          <input type="checkbox" id="auto-toggle" aria-labelledby="auto-switch-label" />
           <span class="slider"></span>
         </label>
-        <span id="auto-status" class="pill warn">Checking…</span>
+        <span id="auto-status" class="pill warn" role="status" aria-live="polite">Checking…</span>
         <span class="kv" id="auto-avg">Avg grid: —</span>
         <span class="spacer"></span>
         <div class="kv" title="Quick set all miners to a fixed target when Auto is OFF">
-          All: 
-          <button class="btn-warn" data-all="800">800W</button>
-          <button class="btn-warn" data-all="1000">1000W</button>
-          <button class="btn-warn" data-all="1420">1420W</button>
-          <button class="btn-warn" data-all="100">Pause</button>
-          <button class="btn-danger" data-all="0">Stop</button>
+          All:
+          <button class="btn-warn" data-all="800" type="button">800W</button>
+          <button class="btn-warn" data-all="1000" type="button">1000W</button>
+          <button class="btn-warn" data-all="1420" type="button">1420W</button>
+          <button class="btn-warn" data-all="100" type="button">Pause</button>
+          <button class="btn-danger" data-all="0" type="button">Stop</button>
         </div>
       </div>
-      <div class="row" style="font-size:12px; color:var(--muted)">
-        Auto distributes solar surplus across miners in steps and pauses miners if no surplus persists. Manual controls are dimmed while Auto is ON.
-      </div>
+      <p class="row" style="font-size:12px; color:var(--muted); margin-top:4px" aria-describedby="auto-label">
+        Auto distributes solar surplus across miners in steps and pauses miners if no surplus persists. Manual controls are disabled while Auto is ON.
+      </p>
     </section>
 
     <!-- Miners -->
     <section class="card miners">
-      <div class="label">Miners</div>
-      <div class="miners-grid" id="miners-grid"></div>
+      <h2 class="label" id="miners-label">Miners</h2>
+      <div class="miners-grid" id="miners-grid" aria-labelledby="miners-label"></div>
     </section>
   </main>
 
   <footer>
     Real-time grid and consumption via Victron MQTT. Per-miner control uses PAPI + SSH through the backend.
   </footer>
+
+  <!-- Toast container -->
+  <div class="toasts" id="toasts" role="region" aria-live="polite" aria-label="Notifications"></div>
 
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
   <script>
@@ -195,6 +273,7 @@
       if(!payload) return;
       const p = payload.power || {}; const c = payload.consumption || {};
       const pt = Number(p.total ?? (p.l1||0)+(p.l2||0)+(p.l3||0));
+      lastGridPowerTotal = isFinite(pt) ? pt : lastGridPowerTotal; // store for absorption calc
       const ct = Number(c.total ?? (c.l1||0)+(c.l2||0)+(c.l3||0));
       $('grid-total').textContent = fmtW(pt);
       $('grid-l1').textContent = fmtW(p.l1);
@@ -209,6 +288,8 @@
       pill.textContent = pt <= -50 ? 'Exporting (Surplus)' : (Math.abs(pt) < 50 ? 'Near Zero' : 'Getting Power (Deficit)');
 
       $('last-update').textContent = new Date(payload.timestamp || Date.now()).toLocaleTimeString();
+      // Recompute absorption immediately after power update
+      try { updateTotals(); } catch(_){ }
     }
 
     // Auto Control state
@@ -468,28 +549,27 @@
         const data = await res.json();
         auto.enabled = !!data.enabled;
         renderAuto();
+        showToast('Auto control ' + (auto.enabled?'enabled':'disabled'), auto.enabled?'ok':'warn');
       }catch(err){
-        e.target.checked = !e.target.checked; // revert
-        alert('Auto control toggle failed: ' + (err.message || err));
+        e.target.checked = !e.target.checked;
+        showToast('Auto toggle failed: ' + (err.message||err),'bad',5000);
       }
     });
 
-    // Quick set for all miners (when auto is off)
+    // Quick set for all miners (when auto is off) - replace alert
     document.addEventListener('click', async (e)=>{
       const btn = e.target.closest('button[data-all]');
       if(!btn) return;
-      if (auto.enabled) { alert('Disable Auto to use quick set for all.'); return; }
+      if (auto.enabled) { showToast('Disable Auto to use quick set for all','warn'); return; }
       const watts = Number(btn.getAttribute('data-all'));
       if (!isFinite(watts)) return;
       try{
-        // fire requests sequentially to be gentle
         for (let i=0;i<minerState.length;i++){
-          await fetch(`${API_BASE}/api/power-target?miner=${i}`,{
-            method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ watts: watts===100?100:watts, shutdown: watts===0?true:undefined })
-          });
+          await fetch(`${API_BASE}/api/power-target?miner=${i}`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ watts: watts===100?100:watts, shutdown: watts===0?true:undefined }) });
         }
+        showToast('Applied ' + (watts===0?'Stop': watts + 'W') + ' to all','ok');
       }catch(err){
-        console.error('Quick set all failed', err);
+        showToast('Quick set failed','bad');
       } finally {
         setTimeout(loadMiners, 1200);
       }
@@ -543,6 +623,171 @@
     setInterval(loadMiners, 5000);
     pollVenus();
     setInterval(pollVenus, 5000);
+
+    // Globals for new metrics
+    let lastGridPowerTotal = null;
+    let lastEfficiency = null;
+
+    function showToast(msg, type='ok', ttl=3200){
+      try{
+        const wrap = document.getElementById('toasts'); if(!wrap) return;
+        const el = document.createElement('div'); el.className = 'toast ' + (type||'');
+        el.innerHTML = `<span style="flex:1;">${msg}</span><button title="Dismiss" aria-label="Dismiss notification">×</button>`;
+        wrap.appendChild(el);
+        const remove=()=>{ el.style.animation='toast-out .25s forwards'; setTimeout(()=>el.remove(), 260); };
+        el.querySelector('button').addEventListener('click', remove);
+        setTimeout(remove, ttl);
+      }catch{}
+    }
+
+    // Override alert fallback (optional, non-blocking)
+    window._alert = window.alert; window.alert = (m)=>showToast(m,'warn',4200);
+
+    function updateTotals(){
+      if(!document.getElementById('total-ths')) return; // safety
+      if(!Array.isArray(minerState) || !minerState.length){
+        document.getElementById('total-ths').textContent='—';
+        document.getElementById('total-miner-power').textContent='—';
+        document.getElementById('miners-count').textContent='0';
+        document.getElementById('avg-miner-power').textContent='—';
+        const effEl = document.getElementById('efficiency'); if (effEl) effEl.textContent='—';
+        const absEl = document.getElementById('surplus-absorption'); if (absEl) absEl.textContent='—';
+        return;
+      }
+      let sumTHs = 0, sumPower = 0, count = 0;
+      for (const m of minerState){
+        const th = getTHs(m); if (th != null) sumTHs += th;
+        const pw = getPower(m); if (pw != null) sumPower += pw;
+        count++;
+      }
+      document.getElementById('miners-count').textContent = count;
+      document.getElementById('total-ths').textContent = fmtTHs(sumTHs);
+      document.getElementById('total-miner-power').textContent = fmtW(sumPower);
+      document.getElementById('avg-miner-power').textContent = (sumPower && count) ? fmtW(sumPower / count) : '—';
+
+      // Efficiency (W/TH)
+      const effEl = document.getElementById('efficiency');
+      if (effEl){
+        if (sumTHs > 0 && sumPower > 0){
+          const wPerTh = sumPower / sumTHs; // already W per TH
+          const valStr = wPerTh.toFixed(1) + ' W/TH';
+          // Trend indicator
+            if (lastEfficiency != null){
+              if (wPerTh < lastEfficiency - 0.5){
+                document.getElementById('efficiency-note').innerHTML = 'Improved <span class="trend-up">↓</span>'; // lower is better
+              } else if (wPerTh > lastEfficiency + 0.5){
+                document.getElementById('efficiency-note').innerHTML = 'Worse <span class="trend-down">↑</span>';
+              } else {
+                document.getElementById('efficiency-note').textContent = 'Stable';
+              }
+            }
+          effEl.textContent = valStr;
+          lastEfficiency = wPerTh;
+        } else {
+          effEl.textContent = '—';
+          document.getElementById('efficiency-note').textContent = 'W / TH (lower is better)';
+        }
+      }
+
+      // Surplus absorption (%)
+      const absEl = document.getElementById('surplus-absorption');
+      if (absEl){
+        if (sumPower > 0 && lastGridPowerTotal != null){
+          let exported = lastGridPowerTotal < 0 ? -lastGridPowerTotal : 0; // negative = exporting surplus
+          // exported includes miner contribution already; to approximate available surplus, treat exported after miners are accounted for.
+          // Absorption = minerPower / (minerPower + exported)
+          const denom = sumPower + exported;
+          const pct = denom > 0 ? (sumPower / denom) * 100 : 0;
+          absEl.textContent = pct.toFixed(1) + ' %';
+        } else {
+          absEl.textContent = '—';
+        }
+      }
+    }
+
+    // Patch renderMiners to call updateTotals after rendering
+    const _renderMinersOrig = renderMiners;
+    renderMiners = function(miners){
+      _renderMinersOrig(miners);
+      try { updateTotals(); } catch(_){}
+    };
+
+    let latestGridPower = null; // track for derived stats
+
+    // Override renderPower to also update derived surplus metrics
+    const _renderPowerOrig = renderPower;
+    renderPower = function(payload){
+      _renderPowerOrig(payload);
+      try{
+        if(payload && payload.power){
+          const p = payload.power; const pt = Number(p.total ?? (p.l1||0)+(p.l2||0)+(p.l3||0));
+          if(isFinite(pt)) latestGridPower = pt; else latestGridPower = null;
+          updateDerivedStats();
+        }
+      }catch(_){ /* ignore */ }
+    };
+
+    function updateEfficiency(sumTHs, sumPowerW){
+      const elTHkW = document.getElementById('eff-ths-kw');
+      if(!elTHkW) return; // card may not exist
+      const elJTH = document.getElementById('eff-jth');
+      const elTHKW = document.getElementById('eff-thkw');
+      if(!sumTHs || !sumPowerW){
+        elTHkW.textContent = '—';
+        elJTH.textContent = '—';
+        elTHKW.textContent = '—';
+        return;
+      }
+      const kw = sumPowerW / 1000;
+      const thPerKW = sumTHs / kw; // TH/s per kW
+      const jPerTH = sumPowerW / sumTHs; // W per (TH/s)
+      elTHkW.textContent = thPerKW ? `${thPerKW.toFixed(2)} TH/kW` : '—';
+      elJTH.textContent = jPerTH ? `${jPerTH.toFixed(0)} W/TH` : '—';
+      elTHKW.textContent = thPerKW ? `${thPerKW.toFixed(2)}` : '—';
+    }
+
+    function updateAbsorption(sumPowerW){
+      const pctEl = document.getElementById('absorption-percent'); if(!pctEl) return;
+      const wattsEl = document.getElementById('absorption-watts');
+      const exportEl = document.getElementById('export-watts');
+      if(sumPowerW == null || !isFinite(sumPowerW)){
+        pctEl.textContent='—'; wattsEl.textContent='—'; exportEl.textContent='—'; return;
+      }
+      const exportW = latestGridPower != null && latestGridPower < 0 ? Math.abs(latestGridPower) : 0;
+      exportEl.textContent = fmtW(exportW);
+      wattsEl.textContent = fmtW(sumPowerW);
+      if(exportW === 0){
+        pctEl.textContent = '100%';
+        return;
+      }
+      const pct = (sumPowerW / (sumPowerW + exportW))*100;
+      pctEl.textContent = isFinite(pct) ? pct.toFixed(1)+ '%' : '—';
+    }
+
+    function updateDerivedStats(){
+      // Called after miner or grid updates
+      if(!Array.isArray(minerState) || !minerState.length){
+        updateEfficiency(null,null); updateAbsorption(null); return;
+      }
+      let sumTHs=0, sumPower=0; let anyTH=false, anyP=false;
+      for(const m of minerState){
+        const th = getTHs(m); if(th!=null){ sumTHs+=th; anyTH=true; }
+        const pw = getPower(m); if(pw!=null){ sumPower+=pw; anyP=true; }
+      }
+      updateEfficiency(anyTH?sumTHs:null, anyP?sumPower:null);
+      updateAbsorption(anyP?sumPower:null);
+    }
+
+    // Patch updateTotals to also run derived stats
+    const _updateTotalsOrig = updateTotals;
+    updateTotals = function(){ _updateTotalsOrig(); try{ updateDerivedStats(); }catch(_){} };
+
+    // Improve toggle ARIA sync
+    const autoToggleEl = document.getElementById('auto-toggle');
+    autoToggleEl.addEventListener('change', ()=>{ autoToggleEl.setAttribute('aria-checked', autoToggleEl.checked ? 'true':'false'); });
+
+    // Initial ARIA state
+    autoToggleEl.setAttribute('aria-checked','false');
   </script>
 </body>
 </html>
