@@ -54,7 +54,8 @@ let keepAliveInterval = null; // Track interval for proper cleanup
 
 let latestData = {
   power: { l1: 0, l2: 0, l3: 0 },
-  consumption: { l1: 0, l2: 0, l3: 0 }
+  consumption: { l1: 0, l2: 0, l3: 0 },
+  battery: { soc: null, voltage: null, current: null, power: null }
 };
 
 const topics = [
@@ -63,7 +64,11 @@ const topics = [
   'N/+/grid/+/Ac/L3/Power',
   'N/+/system/+/Ac/ConsumptionOnInput/L1/Power',
   'N/+/system/+/Ac/ConsumptionOnInput/L2/Power',
-  'N/+/system/+/Ac/ConsumptionOnInput/L3/Power'
+  'N/+/system/+/Ac/ConsumptionOnInput/L3/Power',
+  'N/+/battery/+/Soc',
+  'N/+/battery/+/Dc/0/Power',
+  'N/+/battery/+/Dc/0/Current',
+  'N/+/battery/+/Dc/0/Voltage'
 ];
 
 const PAPI_APPEND_NEWLINE = /^true$/i.test(process.env.PAPI_APPEND_NEWLINE || 'false');
@@ -105,6 +110,7 @@ mqttClient.on('message', (topic, message) => {
     const topicParts = topic.split('/');
     const category = topicParts[2];
     const metric = topicParts.slice(4).join('/');
+    
     if (category === 'grid') {
       if (metric.startsWith('Ac/L1/Power')) latestData.power.l1 = value;
       else if (metric.startsWith('Ac/L2/Power')) latestData.power.l2 = value;
@@ -113,6 +119,16 @@ mqttClient.on('message', (topic, message) => {
       if (metric.endsWith('L1/Power')) latestData.consumption.l1 = value;
       else if (metric.endsWith('L2/Power')) latestData.consumption.l2 = value;
       else if (metric.endsWith('L3/Power')) latestData.consumption.l3 = value;
+    } else if (category === 'battery') {
+      if (metric === 'Soc') {
+        latestData.battery.soc = value;
+      } else if (metric === 'Dc/0/Power') {
+        latestData.battery.power = value;
+      } else if (metric === 'Dc/0/Current') {
+        latestData.battery.current = value;
+      } else if (metric === 'Dc/0/Voltage') {
+        latestData.battery.voltage = value;
+      }
     }
   } catch (e) {
     logger.warn('Could not parse MQTT message', { topic, message: message.toString(), error: e.message });
@@ -136,8 +152,10 @@ setInterval(() => {
   const dataToSend = {
     power: { ...latestData.power, total: totalPower },
     consumption: { ...latestData.consumption, total: totalConsumption },
+    battery: { ...latestData.battery },
     timestamp: new Date().toISOString()
   };
+  
   io.emit('data_update', dataToSend);
   latestData.lastSent = dataToSend;
 }, 5000);

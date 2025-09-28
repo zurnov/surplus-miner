@@ -192,13 +192,14 @@
       </div>
     </section>
 
-    <!-- Surplus Absorption -->
-    <section class="card" id="card-absorption">
-      <h2 class="label" id="absorb-label">Surplus Absorption</h2>
-      <div class="value" id="absorption-percent" aria-labelledby="absorb-label">—</div>
+    <!-- Battery SOC -->
+    <section class="card" id="card-battery-soc">
+      <h2 class="label" id="battery-soc-label">Battery SOC</h2>
+      <div class="value" id="battery-soc" aria-labelledby="battery-soc-label">—</div>
       <div class="row">
-        <div class="kv" title="Estimated surplus being utilized by miners">Absorbed: <span id="absorption-watts">—</span></div>
-        <div class="kv" title="Current export (if negative grid power)">Export: <span id="export-watts">—</span></div>
+        <div class="kv" title="Battery voltage">Voltage: <span id="battery-voltage">—</span></div>
+        <div class="kv" title="Battery current (positive = charging, negative = discharging)">Current: <span id="battery-current">—</span></div>
+        <span class="right pill" id="battery-pill">Unknown</span>
       </div>
     </section>
 
@@ -273,7 +274,6 @@
       if(!payload) return;
       const p = payload.power || {}; const c = payload.consumption || {};
       const pt = Number(p.total ?? (p.l1||0)+(p.l2||0)+(p.l3||0));
-      lastGridPowerTotal = isFinite(pt) ? pt : lastGridPowerTotal; // store for absorption calc
       const ct = Number(c.total ?? (c.l1||0)+(c.l2||0)+(c.l3||0));
       $('grid-total').textContent = fmtW(pt);
       $('grid-l1').textContent = fmtW(p.l1);
@@ -288,8 +288,73 @@
       pill.textContent = pt <= -50 ? 'Exporting (Surplus)' : (Math.abs(pt) < 50 ? 'Near Zero' : 'Getting Power (Deficit)');
 
       $('last-update').textContent = new Date(payload.timestamp || Date.now()).toLocaleTimeString();
+      
+      // Render battery data if available
+      renderBattery(payload);
+      
       // Recompute absorption immediately after power update
       try { updateTotals(); } catch(_){ }
+    }
+
+    // Battery rendering
+    function renderBattery(payload){
+      if(!payload || !payload.battery) {
+        // No battery data available
+        $('battery-soc').textContent = '—';
+        $('battery-voltage').textContent = '—';
+        $('battery-current').textContent = '—';
+        const pill = $('battery-pill'); 
+        pill.classList.remove('ok','warn','bad');
+        pill.textContent = 'No Data';
+        return;
+      }
+      
+      const b = payload.battery;
+      const soc = Number(b.soc || b.stateOfCharge);
+      const voltage = Number(b.voltage || b.volt);
+      const current = Number(b.current || b.amp);
+      
+      // Format SOC as percentage
+      $('battery-soc').textContent = isFinite(soc) ? `${Math.round(soc)}%` : '—';
+      
+      // Format voltage
+      $('battery-voltage').textContent = isFinite(voltage) ? `${voltage.toFixed(1)}V` : '—';
+      
+      // Format current with sign indication
+      if (isFinite(current)) {
+        const absI = Math.abs(current);
+        const sign = current >= 0 ? '+' : '-';
+        $('battery-current').textContent = `${sign}${absI.toFixed(1)}A`;
+      } else {
+        $('battery-current').textContent = '—';
+      }
+      
+      // Set battery status pill based on SOC and current
+      const pill = $('battery-pill');
+      pill.classList.remove('ok','warn','bad');
+      
+      if (!isFinite(soc)) {
+        pill.textContent = 'Unknown';
+        return;
+      }
+      
+      if (current > 0.1) {
+        pill.classList.add('ok');
+        pill.textContent = 'Charging';
+      } else if (current < -0.1) {
+        pill.classList.add('warn');
+        pill.textContent = 'Discharging';
+      } else {
+        pill.classList.add('warn');
+        pill.textContent = 'Idle';
+      }
+      
+      // Override with low battery warning if SOC is critical
+      if (soc < 20) {
+        pill.classList.remove('ok','warn');
+        pill.classList.add('bad');
+        pill.textContent = 'Low Battery';
+      }
     }
 
     // Auto Control state
@@ -651,7 +716,6 @@
         document.getElementById('miners-count').textContent='0';
         document.getElementById('avg-miner-power').textContent='—';
         const effEl = document.getElementById('efficiency'); if (effEl) effEl.textContent='—';
-        const absEl = document.getElementById('surplus-absorption'); if (absEl) absEl.textContent='—';
         return;
       }
       let sumTHs = 0, sumPower = 0, count = 0;
@@ -686,21 +750,6 @@
         } else {
           effEl.textContent = '—';
           document.getElementById('efficiency-note').textContent = 'W / TH (lower is better)';
-        }
-      }
-
-      // Surplus absorption (%)
-      const absEl = document.getElementById('surplus-absorption');
-      if (absEl){
-        if (sumPower > 0 && lastGridPowerTotal != null){
-          let exported = lastGridPowerTotal < 0 ? -lastGridPowerTotal : 0; // negative = exporting surplus
-          // exported includes miner contribution already; to approximate available surplus, treat exported after miners are accounted for.
-          // Absorption = minerPower / (minerPower + exported)
-          const denom = sumPower + exported;
-          const pct = denom > 0 ? (sumPower / denom) * 100 : 0;
-          absEl.textContent = pct.toFixed(1) + ' %';
-        } else {
-          absEl.textContent = '—';
         }
       }
     }
@@ -746,28 +795,10 @@
       elTHKW.textContent = thPerKW ? `${thPerKW.toFixed(2)}` : '—';
     }
 
-    function updateAbsorption(sumPowerW){
-      const pctEl = document.getElementById('absorption-percent'); if(!pctEl) return;
-      const wattsEl = document.getElementById('absorption-watts');
-      const exportEl = document.getElementById('export-watts');
-      if(sumPowerW == null || !isFinite(sumPowerW)){
-        pctEl.textContent='—'; wattsEl.textContent='—'; exportEl.textContent='—'; return;
-      }
-      const exportW = latestGridPower != null && latestGridPower < 0 ? Math.abs(latestGridPower) : 0;
-      exportEl.textContent = fmtW(exportW);
-      wattsEl.textContent = fmtW(sumPowerW);
-      if(exportW === 0){
-        pctEl.textContent = '100%';
-        return;
-      }
-      const pct = (sumPowerW / (sumPowerW + exportW))*100;
-      pctEl.textContent = isFinite(pct) ? pct.toFixed(1)+ '%' : '—';
-    }
-
     function updateDerivedStats(){
       // Called after miner or grid updates
       if(!Array.isArray(minerState) || !minerState.length){
-        updateEfficiency(null,null); updateAbsorption(null); return;
+        updateEfficiency(null,null); return;
       }
       let sumTHs=0, sumPower=0; let anyTH=false, anyP=false;
       for(const m of minerState){
@@ -775,7 +806,6 @@
         const pw = getPower(m); if(pw!=null){ sumPower+=pw; anyP=true; }
       }
       updateEfficiency(anyTH?sumTHs:null, anyP?sumPower:null);
-      updateAbsorption(anyP?sumPower:null);
     }
 
     // Patch updateTotals to also run derived stats
