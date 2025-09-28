@@ -93,7 +93,7 @@ mqttClient.on('connect', () => {
   if (keepAliveInterval) clearInterval(keepAliveInterval);
   keepAliveInterval = setInterval(() => {
     if (mqttClient.connected) {
-      mqttClient.publish(`victron/R/${VENUS_ID}/system/0/Serial`, '');
+      mqttClient.publish(`R/${VENUS_ID}/keepalive` , '');
     }
   }, 30000);
 });
