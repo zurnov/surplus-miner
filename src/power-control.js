@@ -364,26 +364,21 @@ app.post('/api/power-target', async (req, res) => {
 });
 
 // --- Solar surplus miner control logic ---
-const SURPLUS_CHECK_INTERVAL = 60000; // ms
-const MOVING_AVG_WINDOW = 20; // window length for moving avg of grid power samples
+const SURPLUS_CHECK_INTERVAL = 30000; // ms
+const MOVING_AVG_WINDOW = 10; // window length for moving avg of grid power samples
 const MIN_POWER = 0; // W per miner when idling/paused
 const MAX_POWER = 1420; // W per miner maximum target
 const GRID_SURPLUS_THRESHOLD = -100; // W (negative = exporting to grid => surplus)
 const GRID_DEFICIT_THRESHOLD = 100; // W (positive = importing from grid)
 const HYSTERESIS = 50; // W noise band
-const MAX_STEP_CHANGE = 150; // W, limit change per interval per miner to avoid thrashing
-const PER_MINER_MIN_APPLY_INTERVAL_MS = 60000; // ms
 
 // Discrete two-miner combo control
 const DISCRETE_MODE = true; // enable combo-based control for 2 miners
 const ALLOWED_LEVELS = [0, 800, 1000, 1420];
-const ENTER_MARGIN = 0; // no step-up margin (direct jumps allowed)
-const EXIT_MARGIN = 0;  // no step-down hysteresis (can jump directly)
-// Removed STRICT_STEPS logic (direct selection now)
 
 let gridPowerHistory = [];
 let lastAutoSet = 0;
-let autoControlEnabled = false; // can be toggled via UI later
+let autoControlEnabled = true; // can be toggled via UI later
 
 // Track last applied targets per miner for smooth control and for fair distribution
 const lastAutoTargets = Object.create(null); // host -> watts (logical level, 0 means OFF)
@@ -477,242 +472,216 @@ async function startAllMiners(){
   return Promise.allSettled(tasks);
 }
 
-function autoSetMinerPower() {
+async function autoSetMinerPower() {
   if (!autoControlEnabled) return;
-  
-  const gridPower = latestData.power.l1 + latestData.power.l2 + latestData.power.l3; // positive = importing, negative = exporting
-  gridPowerHistory.push(gridPower);
-  if (gridPowerHistory.length > MOVING_AVG_WINDOW) gridPowerHistory.shift();
-  const avgGridPower = getMovingAvg(gridPowerHistory);
-  const surplusW = Math.max(0, -avgGridPower);
-  const now = Date.now();
-  // Only act every interval
-  if (now - lastAutoSet < SURPLUS_CHECK_INTERVAL) return;
-  lastAutoSet = now;
+  try {
+    const gridPower = latestData.power.l1 + latestData.power.l2 + latestData.power.l3; // positive = importing, negative = exporting
+    gridPowerHistory.push(gridPower);
+    if (gridPowerHistory.length > MOVING_AVG_WINDOW) gridPowerHistory.shift();
+    const avgGridPower = getMovingAvg(gridPowerHistory);
+    const now = Date.now();
+    // Only act every interval
+    if (now - lastAutoSet < SURPLUS_CHECK_INTERVAL) return;
+    lastAutoSet = now;
 
-  if (!MINER_HOSTS.length) {
-    logger.warn('No miners configured in MINER_HOSTS');
-    return;
-  }
+    if (!MINER_HOSTS.length) {
+      logger.warn('No miners configured in MINER_HOSTS');
+      return;
+    }
 
-  // Ensure we have initial targets
-  for (const host of MINER_HOSTS) if (!Number.isFinite(lastAutoTargets[host])) lastAutoTargets[host] = MIN_POWER;
+    // Ensure we have initial targets
+    for (const host of MINER_HOSTS) if (!Number.isFinite(lastAutoTargets[host])) lastAutoTargets[host] = MIN_POWER;
 
-  // --- Auto shutdown / resume ---
-  const shutdownEnabled = AUTO_SHUTDOWN_MINUTES > 0;
-  const resumeEnabled = AUTO_RESUME_MINUTES > 0;
+    // --- Measure actual miner power (prefer measured values when available) ---
+    let measuredResults = [];
+    try {
+      measuredResults = await Promise.all(
+        MINER_HOSTS.map(h => getMinerPower(h).catch(err => ({ total: null, error: err && err.message })))
+      );
+    } catch (e) {
+      // should not happen because individual promises catch; still log
+      logger.warn('Error measuring miners', { error: e.message });
+    }
+    const measuredMap = Object.fromEntries(MINER_HOSTS.map((h, i) => [h, Number.isFinite(measuredResults[i]?.total) ? measuredResults[i].total : null]));
+    const measuredSum = MINER_HOSTS.reduce((s, h) => s + (Number.isFinite(measuredMap[h]) ? measuredMap[h] : 0), 0);
 
-  // If miners are currently stopped, only evaluate resume condition and skip power targeting
-  if (minersAreShutDown) {
-    if (resumeEnabled) {
-      const resumeCond = gridPower < (GRID_SURPLUS_THRESHOLD - HYSTERESIS); // instantaneous surplus export sustained
-      const surplusAmount = Math.max(0, -gridPower);
-      const thresholdWithHysteresis = GRID_SURPLUS_THRESHOLD - HYSTERESIS;
-      
-      logger.debug(`Resume evaluation: gridPower=${gridPower.toFixed(1)}W, avgGridPower=${avgGridPower.toFixed(1)}W, surplus=${surplusAmount.toFixed(1)}W, threshold=${thresholdWithHysteresis}W, condition=${resumeCond}`, {
-        instantGridPower: gridPower.toFixed(1),
-        movingAvgGridPower: avgGridPower.toFixed(1),
-        surplusDetected: surplusAmount.toFixed(1),
-        resumeThreshold: thresholdWithHysteresis,
-        conditionMet: resumeCond,
-        requiredMinutes: AUTO_RESUME_MINUTES,
-        currentlyHolding: !!surplusHoldStartTs
-      });
-      
-      if (resumeCond) {
-        if (!surplusHoldStartTs) {
-          surplusHoldStartTs = now;
-          logger.info(`Resume arming: sustained surplus detected (${surplusAmount.toFixed(1)}W export). Waiting ${AUTO_RESUME_MINUTES} min before resume...`, {
-            gridPower: gridPower.toFixed(1),
-            avgGridPower: avgGridPower.toFixed(1),
-            surplusAmount: surplusAmount.toFixed(1),
-            threshold: thresholdWithHysteresis,
-            requiredMinutes: AUTO_RESUME_MINUTES,
-            holdStartTime: new Date(surplusHoldStartTs).toLocaleTimeString()
-          });
-        }
-        const heldMs = now - (surplusHoldStartTs || now);
-        const heldMinutes = heldMs / 60000;
-        const remainingMinutes = Math.max(0, AUTO_RESUME_MINUTES - heldMinutes);
-        const progressPercent = Math.min(100, (heldMinutes / AUTO_RESUME_MINUTES) * 100);
-        
-        logger.debug(`Resume hold progress: held=${heldMinutes.toFixed(2)}min (${progressPercent.toFixed(1)}%), remaining=${remainingMinutes.toFixed(2)}min, surplus=${surplusAmount.toFixed(1)}W`, {
-          heldDurationMinutes: heldMinutes.toFixed(2),
-          remainingMinutes: remainingMinutes.toFixed(2),
-          progressPercent: progressPercent.toFixed(1),
-          currentSurplus: surplusAmount.toFixed(1),
-          willTriggerIn: remainingMinutes > 0 ? `${remainingMinutes.toFixed(2)} minutes` : 'READY'
+    logger.debug('Measured miner powers', { measuredMap, measuredSum, avgGridPower: avgGridPower.toFixed(1) });
+
+    // --- Auto shutdown / resume (unchanged behavior, but use measured values for diagnostics) ---
+    const shutdownEnabled = AUTO_SHUTDOWN_MINUTES > 0;
+    const resumeEnabled = AUTO_RESUME_MINUTES > 0;
+
+    if (minersAreShutDown) {
+      if (resumeEnabled) {
+        const resumeCond = gridPower < (GRID_SURPLUS_THRESHOLD - HYSTERESIS);
+        const surplusAmount = Math.max(0, -gridPower);
+        const thresholdWithHysteresis = GRID_SURPLUS_THRESHOLD - HYSTERESIS;
+
+        logger.debug(`Resume evaluation: gridPower=${gridPower.toFixed(1)}W, avgGridPower=${avgGridPower.toFixed(1)}W, measuredSum=${measuredSum.toFixed(1)}W`, {
+          instantGridPower: gridPower.toFixed(1),
+          movingAvgGridPower: avgGridPower.toFixed(1),
+          surplusDetected: surplusAmount.toFixed(1),
+          resumeThreshold: thresholdWithHysteresis,
+          conditionMet: resumeCond,
+          requiredMinutes: AUTO_RESUME_MINUTES,
+          currentlyHolding: !!surplusHoldStartTs
         });
-        
-        if (heldMs >= AUTO_RESUME_MINUTES * 60000) {
-          logger.info(`Auto-resume triggered: surplus held for ${heldMinutes.toFixed(2)} minutes. Starting all miners.`, {
-            heldDurationMinutes: heldMinutes.toFixed(2),
-            finalSurplus: surplusAmount.toFixed(1),
-            avgGridPower: avgGridPower.toFixed(1),
-            triggerTime: new Date().toLocaleTimeString()
-          });
-          startAllMiners().then(() => {
-            minersAreShutDown = false;
-            surplusHoldStartTs = null;
-            noSurplusStartTs = null;
-            // Reset targets to MIN_POWER so control can ramp up cleanly next cycles
-            for (const h of MINER_HOSTS) { lastAutoTargets[h] = MIN_POWER; lastApplyTs[h] = 0; }
-            io.emit('auto_control_update', { enabled: autoControlEnabled, autoEvent: 'resumed', lastAvgGridPower: avgGridPower });
-            logger.info('Auto-resume completed: all miners started, ready for power targeting');
-          });
+
+        if (resumeCond) {
+          if (!surplusHoldStartTs) {
+            surplusHoldStartTs = now;
+            logger.info(`Resume arming: sustained surplus detected (${surplusAmount.toFixed(1)}W export). Waiting ${AUTO_RESUME_MINUTES} min before resume...`);
+          }
+          const heldMs = now - (surplusHoldStartTs || now);
+          if (heldMs >= AUTO_RESUME_MINUTES * 60000) {
+            logger.info(`Auto-resume triggered: surplus held for ${heldMs/60000} minutes. Starting all miners.`);
+            startAllMiners().then(() => {
+              minersAreShutDown = false;
+              surplusHoldStartTs = null;
+              noSurplusStartTs = null;
+              for (const h of MINER_HOSTS) { lastAutoTargets[h] = MIN_POWER; lastApplyTs[h] = 0; }
+              io.emit('auto_control_update', { enabled: autoControlEnabled, autoEvent: 'resumed', lastAvgGridPower: avgGridPower });
+              logger.info('Auto-resume completed: all miners started, ready for power targeting');
+            });
+          }
+        } else {
+          if (surplusHoldStartTs) surplusHoldStartTs = null;
         }
       } else {
-        // Resume condition not met
-        logger.debug(`Resume condition NOT met: gridPower=${gridPower.toFixed(1)}W >= threshold=${thresholdWithHysteresis}W`, {
-          gridPower: gridPower.toFixed(1),
-          threshold: thresholdWithHysteresis,
-          deficit: (gridPower - thresholdWithHysteresis).toFixed(1),
-          conditionMet: false
-        });
-        
-        if (surplusHoldStartTs) {
-          const heldMs = now - surplusHoldStartTs;
-          const heldMinutes = heldMs / 60000;
-          const remainingMinutes = AUTO_RESUME_MINUTES - heldMinutes;
-          logger.info(`Resume condition cleared: surplus lost after ${heldMinutes.toFixed(2)} minutes (${remainingMinutes.toFixed(2)}min remaining)`, {
-            gridPower: gridPower.toFixed(1),
-            heldDurationMinutes: heldMinutes.toFixed(2),
-            remainingMinutes: remainingMinutes.toFixed(2),
-            wasAtProgress: `${Math.min(100, (heldMinutes / AUTO_RESUME_MINUTES) * 100).toFixed(1)}%`
-          });
-          surplusHoldStartTs = null;
+        logger.debug('Resume disabled (AUTO_RESUME_MINUTES=0), miners will remain shut down');
+      }
+      return;
+    }
+
+    if (shutdownEnabled) {
+      const noSurplus = gridPower >= 0;
+      const importing = gridPower > (GRID_DEFICIT_THRESHOLD + HYSTERESIS);
+      const shutdownCond = noSurplus || importing;
+      if (shutdownCond) {
+        if (!noSurplusStartTs) {
+          noSurplusStartTs = now;
+          logger.info(`Shutdown arming: no-surplus/deficit detected. Waiting ${AUTO_SHUTDOWN_MINUTES} min...`);
         }
+        const heldMs = now - (noSurplusStartTs || now);
+        if (heldMs >= AUTO_SHUTDOWN_MINUTES * 60000) {
+          logger.info('Auto-shutdown: stopping all miners.');
+          shutdownAllMiners().then(() => {
+            minersAreShutDown = true;
+            noSurplusStartTs = null;
+            surplusHoldStartTs = null;
+            io.emit('auto_control_update', { enabled: autoControlEnabled, autoEvent: 'shutdown', lastAvgGridPower: avgGridPower });
+          });
+          return;
+        }
+      } else if (noSurplusStartTs) {
+        noSurplusStartTs = null;
+      }
+    }
+
+    // Discrete two-miner combo control: prefer absolute combo that matches measured needs
+    if (DISCRETE_MODE && MINER_HOSTS.length === 2) {
+      const desiredTotal = Math.max(0, Math.round(-avgGridPower));
+      // If measuredSum already meets or exceeds the desired total, skip increases but still allow reductions
+      logger.debug('Discrete mode decision', { desiredTotal, measuredSum, lastAutoTargets });
+      const nextCombo = pickBestCombo(desiredTotal);
+
+      const actions = [];
+      for (let i = 0; i < MINER_HOSTS.length; i++) {
+        const host = MINER_HOSTS[i];
+        const desired = nextCombo[i];
+        actions.push(applyMinerPower(host, desired));
+      }
+
+      Promise.allSettled(actions).then(() => {
+        io.emit('auto_control_update', {
+          enabled: autoControlEnabled,
+          lastAvgGridPower: avgGridPower,
+          surplusW: Math.max(0, -avgGridPower),
+          discreteCombo: nextCombo,
+          perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h => [h, lastAutoTargets[h] || 0]))
+        });
+      });
+      return;
+    }
+
+    // Continuous control path (use measured values where available to compute remaining need)
+    const hostsFair = reorderHostsFair(MINER_HOSTS);
+    const actions = [];
+
+    if (avgGridPower < GRID_SURPLUS_THRESHOLD - HYSTERESIS) {
+      // Excess solar: increase miners to absorb surplus
+      const desiredTotal = Math.round(-avgGridPower); // total W we'd like miners to consume
+
+      // Compute current measured sum (fallback to lastAutoTargets if measurement missing)
+      let currentSum = 0;
+      for (const h of MINER_HOSTS) {
+        if (Number.isFinite(measuredMap[h])) currentSum += measuredMap[h];
+        else currentSum += Number.isFinite(lastAutoTargets[h]) ? lastAutoTargets[h] : 0;
+      }
+
+      let remaining = Math.max(0, desiredTotal - currentSum); // W to add
+
+      // Compute capacity based on last applied targets
+      let maxCapacity = 0;
+      for (const host of hostsFair) {
+        const cur = Number.isFinite(lastAutoTargets[host]) ? lastAutoTargets[host] : 0;
+        maxCapacity += Math.max(0, MAX_POWER - cur);
+      }
+      if (remaining > maxCapacity) remaining = maxCapacity;
+
+      logger.debug(`Surplus distribution: desiredTotal=${desiredTotal}W, measuredSum=${currentSum}W, remaining=${remaining}W, capacity=${maxCapacity}W`);
+
+      for (const host of hostsFair) {
+        if (remaining <= 0) break;
+        const cur = Number.isFinite(lastAutoTargets[host]) ? lastAutoTargets[host] : 0;
+        const headroom = Math.max(0, MAX_POWER - cur);
+        const inc = Math.min(headroom, Math.ceil(remaining / Math.max(1, hostsFair.length)));
+        const next = clamp(cur + inc, MIN_POWER, MAX_POWER);
+        actions.push(applyMinerPower(host, next));
+        remaining -= (next - cur);
+      }
+    } else if (avgGridPower > GRID_DEFICIT_THRESHOLD + HYSTERESIS) {
+      // Importing from grid: reduce miners toward MIN_POWER
+      let needReduce = Math.round(avgGridPower); // W to reduce
+      const hostsByPower = hostsFair.slice().sort((a, b) => (lastAutoTargets[b] || MIN_POWER) - (lastAutoTargets[a] || MIN_POWER));
+
+      let reducibleTotal = 0;
+      for (const h of hostsByPower) reducibleTotal += Math.max(0, (lastAutoTargets[h] || MIN_POWER) - MIN_POWER);
+      if (needReduce > reducibleTotal) needReduce = reducibleTotal;
+
+      logger.debug(`Reducing miners: avgGrid=${avgGridPower.toFixed(1)}W, needReduce=${needReduce}W, reducibleTotal=${reducibleTotal}W`);
+
+      for (const host of hostsByPower) {
+        if (needReduce <= 0) break;
+        const cur = lastAutoTargets[host];
+        const reducible = Math.max(0, cur - MIN_POWER);
+        const dec = Math.min(reducible, Math.ceil(needReduce / Math.max(1, hostsByPower.length)));
+        const next = clamp(cur - dec, MIN_POWER, MAX_POWER);
+        actions.push(applyMinerPower(host, next));
+        needReduce -= (cur - next);
       }
     } else {
-      logger.debug('Resume disabled (AUTO_RESUME_MINUTES=0), miners will remain shut down', {
-        resumeEnabled: false,
-        autoResumeMinutes: AUTO_RESUME_MINUTES,
-        minersShutDown: true
-      });
+      logger.debug(`Within hysteresis. Avg grid: ${avgGridPower.toFixed(1)}W. No changes.`);
     }
-    // While shut down, skip target application
-    return;
-  }
 
-  // Miners running: evaluate shutdown condition
-  if (shutdownEnabled) {
-    // Treat instantaneous "no surplus" (gridPower >= 0) or explicit importing beyond threshold as shutdown condition
-    const noSurplus = gridPower >= 0;
-    const importing = gridPower > (GRID_DEFICIT_THRESHOLD + HYSTERESIS);
-    const shutdownCond = noSurplus || importing;
-    if (shutdownCond) {
-      if (!noSurplusStartTs) {
-        noSurplusStartTs = now;
-        logger.info(`Shutdown arming: no-surplus/deficit detected. Waiting ${AUTO_SHUTDOWN_MINUTES} min...`);
-      }
-      const heldMs = now - (noSurplusStartTs || now);
-      if (heldMs >= AUTO_SHUTDOWN_MINUTES * 60000) {
-        logger.info('Auto-shutdown: stopping all miners.');
-        shutdownAllMiners().then(() => {
-          minersAreShutDown = true;
-          noSurplusStartTs = null;
-          surplusHoldStartTs = null;
-          io.emit('auto_control_update', { enabled: autoControlEnabled, autoEvent: 'shutdown', lastAvgGridPower: avgGridPower });
+    if (actions.length) {
+      Promise.allSettled(actions).then((results) => {
+        io.emit('auto_control_update', {
+          enabled: autoControlEnabled,
+          lastAvgGridPower: avgGridPower,
+          perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h => [h, lastAutoTargets[h]]))
         });
-        return; // Do not proceed with targeting after issuing shutdown
-      }
-    } else if (noSurplusStartTs) {
-      logger.info('Shutdown condition cleared.');
-      noSurplusStartTs = null;
-    }
-  }
-
-  // Discrete two-miner mode
-  if (DISCRETE_MODE && MINER_HOSTS.length === 2) {
-    // Compute desired combo directly (no stepwise hysteresis)
-    const nextCombo = pickBestCombo(Math.max(0, -avgGridPower));
-
-    const actions = [];
-    for (let i = 0; i < MINER_HOSTS.length; i++) {
-      const host = MINER_HOSTS[i];
-      const desired = nextCombo[i];
-      actions.push(applyMinerPower(host, desired));
-    }
-
-    Promise.allSettled(actions).then(()=>{
+        logger.debug('Applied auto-control changes', { perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h => [h, lastAutoTargets[h]])) });
+      });
+    } else {
       io.emit('auto_control_update', {
         enabled: autoControlEnabled,
         lastAvgGridPower: avgGridPower,
-        surplusW: Math.max(0, -avgGridPower),
-        discreteCombo: nextCombo,
-        perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h=>[h, lastAutoTargets[h]||0]))
+        perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h => [h, lastAutoTargets[h]]))
       });
-    });
-    return;
-  }
-
-  // Continuous control path
-  const hostsFair = reorderHostsFair(MINER_HOSTS);
-  const actions = [];
-  if (avgGridPower < GRID_SURPLUS_THRESHOLD - HYSTERESIS) {
-    // Excess solar: increase miners to absorb surplus
-    let remaining = Math.round(-avgGridPower); // W to consume additionally
-    // Compute current sum and max additional capacity
-    let currentSum = 0, maxCapacity = 0;
-    for (const host of hostsFair) {
-      const cur = lastAutoTargets[host];
-      currentSum += cur;
-      maxCapacity += Math.max(0, MAX_POWER - cur);
     }
-    if (remaining > maxCapacity) remaining = maxCapacity; // cap at available headroom
-
-    logger.debug(`Surplus ${(-avgGridPower).toFixed(0)}W (avg). Distributing +${remaining}W across ${hostsFair.length} miners.`);
-
-    for (const host of hostsFair) {
-      if (remaining <= 0) break;
-      const cur = lastAutoTargets[host];
-      const headroom = Math.max(0, MAX_POWER - cur);
-      const inc = Math.min(headroom, Math.ceil(remaining / Math.max(1, hostsFair.length))); // fair-ish share
-      const next = clamp(cur + inc, MIN_POWER, MAX_POWER);
-      actions.push(applyMinerPower(host, next));
-      remaining -= (next - cur);
-    }
-  } else if (avgGridPower > GRID_DEFICIT_THRESHOLD + HYSTERESIS) {
-    // Importing from grid: reduce miners toward MIN_POWER
-    let needReduce = Math.round(avgGridPower); // W to reduce
-    // Sort hosts by current target descending to reduce highest first
-    const hostsByPower = hostsFair.slice().sort((a,b)=> (lastAutoTargets[b]||MIN_POWER) - (lastAutoTargets[a]||MIN_POWER));
-
-    let reducibleTotal = 0;
-    for (const h of hostsByPower) reducibleTotal += Math.max(0, (lastAutoTargets[h]||MIN_POWER) - MIN_POWER);
-    if (needReduce > reducibleTotal) needReduce = reducibleTotal;
-
-    logger.debug(`Deficit ${avgGridPower.toFixed(0)}W (avg). Reducing −${needReduce}W across ${hostsFair.length} miners.`);
-
-    for (const host of hostsByPower) {
-      if (needReduce <= 0) break;
-      const cur = lastAutoTargets[host];
-      const reducible = Math.max(0, cur - MIN_POWER);
-      const dec = Math.min(reducible, Math.ceil(needReduce / Math.max(1, hostsByPower.length)));
-      const next = clamp(cur - dec, MIN_POWER, MAX_POWER);
-      actions.push(applyMinerPower(host, next));
-      needReduce -= (cur - next);
-    }
-  } else {
-    logger.debug(`Within hysteresis. Avg grid: ${avgGridPower.toFixed(1)}W. No changes.`);
-  }
-
-  if (actions.length) {
-    Promise.allSettled(actions).then((results)=>{
-      const summary = results.map(r=> r.value?.applied ? `${r.value.host}:${r.value.applied}W` : `${r.value?.host||'?'}:skip`).join(', ');
-      io.emit('auto_control_update', {
-        enabled: autoControlEnabled,
-        lastAvgGridPower: avgGridPower,
-        perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h=>[h, lastAutoTargets[h]]))
-      });
-      logger.debug(`Applied: ${summary}`);
-    });
-  } else {
-    io.emit('auto_control_update', {
-      enabled: autoControlEnabled,
-      lastAvgGridPower: avgGridPower,
-      perMinerTargets: Object.fromEntries(MINER_HOSTS.map(h=>[h, lastAutoTargets[h]]))
-    });
+  } catch (e) {
+    logger.error('autoSetMinerPower error', { error: e && e.message });
   }
 }
 setInterval(autoSetMinerPower, SURPLUS_CHECK_INTERVAL);
