@@ -5,7 +5,10 @@
   "type": "commonjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node src/power-control.js"
+    "start": "node src/power-control.js",
+    "power-control": "node src/power-control.js",
+    "server": "node src/server.js",
+    "compose:rebuild": "docker compose up -d --build --force-recreate"
   },
   "keywords": [],
   "author": "",
