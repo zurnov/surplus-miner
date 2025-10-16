@@ -578,17 +578,16 @@ async function autoSetMinerPower() {
       }
     }
 
-    // Discrete two-miner combo control: prefer absolute combo that matches measured needs
-    if (DISCRETE_MODE && MINER_HOSTS.length === 2) {
+    // Discrete N-miner combo control: pick N-levels from ALLOWED_LEVELS that best match the desired total
+    if (DISCRETE_MODE) {
       const desiredTotal = Math.max(0, Math.round(-avgGridPower));
-      // If measuredSum already meets or exceeds the desired total, skip increases but still allow reductions
-      logger.debug('Discrete mode decision', { desiredTotal, measuredSum, lastAutoTargets });
-      const nextCombo = pickBestCombo(desiredTotal);
+      logger.debug('Discrete mode decision', { desiredTotal, measuredSum, lastAutoTargets, miners: MINER_HOSTS.length });
+      const nextCombo = pickBestCombo(desiredTotal, MINER_HOSTS.length);
 
       const actions = [];
       for (let i = 0; i < MINER_HOSTS.length; i++) {
         const host = MINER_HOSTS[i];
-        const desired = nextCombo[i];
+        const desired = nextCombo[i] || 0;
         actions.push(applyMinerPower(host, desired));
       }
 
@@ -960,25 +959,86 @@ function fmtUptime(sec) {
 }
 
 // Discrete combo picker for surplus mining (direct best-fit selection)
-function pickBestCombo(surplusW){
-  const combos = [];
-  for (const a of ALLOWED_LEVELS) for (const b of ALLOWED_LEVELS) combos.push([a,b]);
-  let best = [0,0];
-  let bestScore = Infinity; // lower better
-  for (const c of combos){
-    const total = c[0]+c[1];
-    const diff = surplusW - total; // positive means unused surplus, negative means overshoot
-    // Primary: prefer non-overshoot (diff>=0). Among those pick smallest diff.
-    // If all overshoot, pick smallest absolute diff.
-    let score;
-    if (diff >= 0) score = diff; else score = Math.abs(diff) + 100000; // large penalty for overshoot
-    // Tie-breakers: larger total (consume more surplus), then more balanced (lower |a-b|)
-    if (score < bestScore || (score === bestScore && (total > (best[0]+best[1]) || (total === (best[0]+best[1]) && Math.abs(c[0]-c[1]) < Math.abs(best[0]-best[1])))) ){
-      best = c;
-      bestScore = score;
+function pickBestCombo(surplusW, nMiners){
+  // Return an array of length nMiners with chosen levels (from ALLOWED_LEVELS) that best match surplusW.
+  // Strategy: dynamic programming to build all achievable sums with exactly nMiners picks (repetition allowed),
+  // then pick the sum <= surplusW that is maximal; if none exist, pick the sum with minimal absolute difference.
+  const allowed = Array.from(new Set(ALLOWED_LEVELS)).slice().sort((a,b)=>a-b);
+  if (!nMiners || nMiners <= 0) return [];
+  // Fast path for single miner
+  if (nMiners === 1) {
+    // prefer level <= surplusW and closest; if none, pick closest overall
+    let best = allowed[0];
+    let bestDiff = Infinity;
+    for (const v of allowed) {
+      const diff = (v <= surplusW) ? (surplusW - v) : (Math.abs(v - surplusW) + 100000);
+      if (diff < bestDiff || (diff === bestDiff && v > best)) { best = v; bestDiff = diff; }
+    }
+    return [best];
+  }
+
+  // dp: Map sum -> combo array (for current count)
+  let dp = new Map();
+  dp.set(0, []);
+
+  for (let count = 1; count <= nMiners; count++) {
+    const next = new Map();
+    for (const [sum, combo] of dp.entries()) {
+      for (const lvl of allowed) {
+        const s = sum + lvl;
+        // store the first seen combination for this sum; prefer more balanced combos if collision
+        const cand = combo.concat(lvl);
+        if (!next.has(s)) {
+          next.set(s, cand);
+        } else {
+          // tie-breaker: prefer combo with smaller range (more balanced)
+          const existing = next.get(s);
+          const existingRange = Math.max(...existing) - Math.min(...existing);
+          const candRange = Math.max(...cand) - Math.min(...cand);
+          if (candRange < existingRange) next.set(s, cand);
+        }
+      }
+    }
+    dp = next;
+    // Safety: if dp size explodes extremely large, cap by trimming unlikely large sums.
+    // Keep sums up to (surplusW + maxAllowed) to allow small overshoot choices.
+    if (dp.size > 20000) {
+      const maxAllowed = allowed[allowed.length-1] * nMiners;
+      const cutoff = Math.max(Math.round(surplusW + maxAllowed * 0.2), maxAllowed);
+      const entries = Array.from(dp.entries()).sort((a,b)=>Math.abs(a[0]-surplusW) - Math.abs(b[0]-surplusW)).slice(0,10000);
+      dp = new Map(entries);
     }
   }
-  return best;
+
+  const sums = Array.from(dp.keys()).sort((a,b)=>a-b);
+  // Prefer non-overshoot sums (<= surplusW) with maximal sum
+  const nonOver = sums.filter(s => s <= surplusW);
+  let bestSum = null;
+  let bestCombo = null;
+  if (nonOver.length) {
+    bestSum = nonOver[nonOver.length - 1];
+    bestCombo = dp.get(bestSum);
+  } else {
+    // pick minimal absolute difference; tie-breaker: larger total (consume more)
+    let bestDiff = Infinity;
+    for (const s of sums) {
+      const diff = Math.abs(s - surplusW);
+      if (diff < bestDiff || (diff === bestDiff && s > bestSum)) {
+        bestDiff = diff;
+        bestSum = s;
+        bestCombo = dp.get(s);
+      }
+    }
+  }
+
+  if (!bestCombo) return new Array(nMiners).fill(0);
+  // Ensure length exactly nMiners (should be)
+  if (bestCombo.length < nMiners) {
+    while (bestCombo.length < nMiners) bestCombo.push(0);
+  } else if (bestCombo.length > nMiners) {
+    bestCombo = bestCombo.slice(0, nMiners);
+  }
+  return bestCombo;
 }
 
 // --- Startup: detect existing miner states (running / stopped + current power_target) ---
