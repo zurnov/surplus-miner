@@ -62,19 +62,28 @@ class FileLogger {
       if (meta !== undefined) {
         try {
           line += ` ${typeof meta === 'string' ? meta : JSON.stringify(meta)}`;
-        } catch {}
+        } catch (e) {
+          // ignore meta stringify errors
+        }
       }
       this.stream?.write(`${line}\n`);
       if (this.mirrorConsole) {
-        const fn =
-          level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+        /* eslint-disable no-console -- intentional console mirror as a last-resort fallback */
+        let fn;
+        if (level === 'error') fn = console.error;
+        else if (level === 'warn') fn = console.warn;
+        else fn = console.log;
         fn(line);
+        /* eslint-enable no-console */
       }
     } catch (e) {
       // last resort
       try {
+        /* eslint-disable-next-line no-console -- last-resort fallback if file writes fail */
         console.error('Logger write failed:', e);
-      } catch {}
+      } catch (e2) {
+        // ignore secondary logger errors
+      }
     }
   }
 
@@ -97,7 +106,9 @@ class FileLogger {
   close() {
     try {
       this.stream?.end();
-    } catch {}
+    } catch (e) {
+      // ignore stream close errors
+    }
     this.stream = null;
   }
 }
