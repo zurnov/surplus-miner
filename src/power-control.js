@@ -305,9 +305,9 @@ function extractPowerFromTuner(tsRoot) {
     if (!ts) return null;
     const total = Number(ts.ApproximateMinerPowerConsumption);
     const perChain = Array.isArray(ts.TunerChainStatus)
-      ? ts.TunerChainStatus
-          .map((c) => Math.round(Number(c.ApproximatePowerConsumptionWatt) || 0))
-          .filter((n) => n > 0)
+      ? ts.TunerChainStatus.map((c) =>
+          Math.round(Number(c.ApproximatePowerConsumptionWatt) || 0)
+        ).filter((n) => n > 0)
       : [];
     const result = {};
     if (Number.isFinite(total)) result.total = Math.round(total);
