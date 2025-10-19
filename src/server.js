@@ -7,7 +7,11 @@ const { FileLogger } = require('./utils/file-logger');
 
 // Initialize file logger
 const LOG_TO_CONSOLE = /^true$/i.test(process.env.LOG_TO_CONSOLE || 'true');
-const logger = new FileLogger({ dir: process.env.LOG_DIR || path.join(process.cwd(), 'logs'), prefix: 'server', console: LOG_TO_CONSOLE });
+const logger = new FileLogger({
+  dir: process.env.LOG_DIR || path.join(process.cwd(), 'logs'),
+  prefix: 'server',
+  console: LOG_TO_CONSOLE,
+});
 
 const app = express();
 app.use(cors());
@@ -31,18 +35,40 @@ const PAPI_APPEND_NEWLINE = /^true$/i.test(process.env.PAPI_APPEND_NEWLINE || 'f
 
 function splitTopLevelJSONObjects(s) {
   const parts = [];
-  let depth = 0, start = -1, inStr = false, esc = false;
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
     if (inStr) {
-      if (esc) { esc = false; continue; }
-      if (ch === '\\') { esc = true; continue; }
-      if (ch === '"') { inStr = false; }
+      if (esc) {
+        esc = false;
+        continue;
+      }
+      if (ch === '\\') {
+        esc = true;
+        continue;
+      }
+      if (ch === '"') {
+        inStr = false;
+      }
       continue;
     }
-    if (ch === '"') { inStr = true; continue; }
-    if (ch === '{') { if (depth === 0) start = i; depth++; }
-    else if (ch === '}') { depth--; if (depth === 0 && start !== -1) { parts.push(s.slice(start, i + 1)); start = -1; } }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        parts.push(s.slice(start, i + 1));
+        start = -1;
+      }
+    }
   }
   return parts;
 }
@@ -59,13 +85,22 @@ function papiRequest(command) {
     let data = '';
     let settled = false;
 
-    const settle = (err, val) => { if (settled) return; settled = true; err ? reject(err) : resolve(val); };
+    const settle = (err, val) => {
+      if (settled) return;
+      settled = true;
+      err ? reject(err) : resolve(val);
+    };
 
     client.setEncoding('utf8');
     client.setTimeout(8000);
 
-    client.on('timeout', () => { client.destroy(new Error('Socket timeout')); });
-    client.on('error', (err) => { logger.error('papi socket error', { message: err.message }); settle(err); });
+    client.on('timeout', () => {
+      client.destroy(new Error('Socket timeout'));
+    });
+    client.on('error', (err) => {
+      logger.error('papi socket error', { message: err.message });
+      settle(err);
+    });
 
     client.connect(MINER_PORT, MINER_HOST, () => {
       let payload = JSON.stringify({ command });
@@ -75,7 +110,9 @@ function papiRequest(command) {
       client.end(); // half-close to signal end of request
     });
 
-    client.on('data', (chunk) => { data += chunk; });
+    client.on('data', (chunk) => {
+      data += chunk;
+    });
 
     const finalize = () => {
       const cleaned = cleanResponse(data);
@@ -149,13 +186,17 @@ function extractPowerFromTuner(tsRoot) {
     if (!ts) return null;
     const total = Number(ts.ApproximateMinerPowerConsumption);
     const per_chain = Array.isArray(ts.TunerChainStatus)
-      ? ts.TunerChainStatus.map((c) => Math.round(Number(c.ApproximatePowerConsumptionWatt) || 0)).filter((n) => n > 0)
+      ? ts.TunerChainStatus.map((c) =>
+          Math.round(Number(c.ApproximatePowerConsumptionWatt) || 0)
+        ).filter((n) => n > 0)
       : [];
     const result = {};
     if (Number.isFinite(total)) result.total = Math.round(total);
     if (per_chain.length) result.per_chain = per_chain;
-    return (result.total != null || (result.per_chain && result.per_chain.length)) ? result : null;
-  } catch (_) { return null; }
+    return result.total != null || (result.per_chain && result.per_chain.length) ? result : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 app.get('/api/version', async (req, res) => {
@@ -186,13 +227,19 @@ app.get('/api/raw', async (req, res) => {
         client.write(payload);
         client.end();
       });
-      client.on('data', (chunk) => { data += chunk; });
+      client.on('data', (chunk) => {
+        data += chunk;
+      });
       const done = () => resolve();
       client.on('end', done);
       client.on('close', done);
     });
     const cleaned = cleanResponse(data);
-    res.json({ length: cleaned.length, preview: cleaned.slice(0, 500), full: cleaned.slice(0, 5000) });
+    res.json({
+      length: cleaned.length,
+      preview: cleaned.slice(0, 500),
+      full: cleaned.slice(0, 5000),
+    });
   } catch (e) {
     logger.error('/api/raw failed', { message: e.message });
     res.status(502).json({ error: e.message });
