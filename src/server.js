@@ -123,7 +123,7 @@ function papiRequest(command) {
         const parts = splitTopLevelJSONObjects(cleaned);
         if (parts.length > 1) return settle(null, { parts });
         // Surface a short preview for diagnostics in logs
-        logger.warn('[papi] Invalid JSON preview', cleaned.slice(0, 200));
+        logger.warn('[papi] Invalid JSON preview', { preview: cleaned.slice(0, 200) });
         return settle(new Error('Invalid JSON from miner'));
       }
     };
@@ -175,8 +175,8 @@ function extractPower(estatsRoot) {
 
   // Round sensibly
   if (total != null) total = Math.round(total);
-  const per_chain = perChain.slice(0, 16).map((n) => Math.round(n));
-  return { total, per_chain };
+  const perChainRounded = perChain.slice(0, 16).map((n) => Math.round(n));
+  return { total, per_chain: perChainRounded };
 }
 
 // New: extract from tunerstatus
