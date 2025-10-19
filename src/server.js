@@ -39,7 +39,7 @@ function splitTopLevelJSONObjects(s) {
   let start = -1;
   let inStr = false;
   let esc = false;
-  for (let i = 0; i < s.length; i++) {
+  for (let i = 0; i < s.length; i += 1) {
     const ch = s[i];
     if (inStr) {
       if (esc) {
@@ -138,7 +138,7 @@ function extractPower(estatsRoot) {
   const totals = [];
   const perChain = [];
 
-  const isNum = (v) => typeof v === 'number' && isFinite(v);
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
   const plausibleTotal = (v) => isNum(v) && v >= 50 && v <= 10000; // W
   const plausibleChain = (v) => isNum(v) && v >= 5 && v <= 5000; // W
 
@@ -311,5 +311,5 @@ app.get('/', (req, res) => {
 const FRONTEND_PORT = process.env.FRONTEND_PORT || 3030;
 app.listen(FRONTEND_PORT, () => {
   logger.info(`Server running on http://localhost:${FRONTEND_PORT}`);
-  console.log(`Server running on http://localhost:${FRONTEND_PORT}`);
 });
+module.exports = { app };
