@@ -15,30 +15,30 @@ class FileLogger {
    * @param {string} [opts.prefix] File prefix (default: app)
    * @param {boolean} [opts.console] Also log to console
    */
-  constructor(opts = {}){
+  constructor(opts = {}) {
     this.dir = path.resolve(opts.dir || path.join(process.cwd(), 'logs'));
     this.prefix = opts.prefix || 'app';
     this.mirrorConsole = !!opts.console;
     this.stream = null;
     this.currentDate = null;
-    this.levels = ['debug','info','warn','error'];
+    this.levels = ['debug', 'info', 'warn', 'error'];
   }
 
-  ensureDir(){
+  ensureDir() {
     fs.mkdirSync(this.dir, { recursive: true });
   }
 
-  filePathFor(date){
+  filePathFor(date) {
     const d = new Date(date);
     const y = d.getFullYear();
-    const m = String(d.getMonth()+1).padStart(2,'0');
-    const day = String(d.getDate()).padStart(2,'0');
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
     return path.join(this.dir, `${this.prefix}-${y}-${m}-${day}.log`);
   }
 
-  rotateIfNeeded(){
+  rotateIfNeeded() {
     const today = new Date().toDateString();
-    if (this.currentDate !== today){
+    if (this.currentDate !== today) {
       this.close();
       this.ensureDir();
       const fp = this.filePathFor(Date.now());
@@ -47,39 +47,57 @@ class FileLogger {
     }
   }
 
-  line(level, msg, meta){
-    try{
+  line(level, msg, meta) {
+    try {
       this.rotateIfNeeded();
       const now = new Date();
-      const ts = now.getFullYear() + '-' + 
-                 String(now.getMonth()+1).padStart(2,'0') + '-' + 
-                 String(now.getDate()).padStart(2,'0') + 'T' +
-                 String(now.getHours()).padStart(2,'0') + ':' +
-                 String(now.getMinutes()).padStart(2,'0') + ':' +
-                 String(now.getSeconds()).padStart(2,'0') + '.' +
-                 String(now.getMilliseconds()).padStart(3,'0');
+      const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+        now.getDate()
+      ).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(
+        now.getMinutes()
+      ).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}.${String(
+        now.getMilliseconds()
+      ).padStart(3, '0')}`;
       let line = `[${ts}] [${level.toUpperCase()}] ${msg}`;
-      if (meta !== undefined){
-        try { line += ' ' + (typeof meta === 'string' ? meta : JSON.stringify(meta)); } catch {}
+      if (meta !== undefined) {
+        try {
+          line += ` ${typeof meta === 'string' ? meta : JSON.stringify(meta)}`;
+        } catch {}
       }
-      this.stream?.write(line + '\n');
-      if (this.mirrorConsole){
-        const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+      this.stream?.write(`${line}\n`);
+      if (this.mirrorConsole) {
+        const fn =
+          level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
         fn(line);
       }
-    }catch(e){
+    } catch (e) {
       // last resort
-      try{ console.error('Logger write failed:', e); }catch{}
+      try {
+        console.error('Logger write failed:', e);
+      } catch {}
     }
   }
 
-  debug(msg, meta){ this.line('debug', msg, meta); }
-  info(msg, meta){ this.line('info', msg, meta); }
-  warn(msg, meta){ this.line('warn', msg, meta); }
-  error(msg, meta){ this.line('error', msg, meta); }
+  debug(msg, meta) {
+    this.line('debug', msg, meta);
+  }
 
-  close(){
-    try{ this.stream?.end(); }catch{}
+  info(msg, meta) {
+    this.line('info', msg, meta);
+  }
+
+  warn(msg, meta) {
+    this.line('warn', msg, meta);
+  }
+
+  error(msg, meta) {
+    this.line('error', msg, meta);
+  }
+
+  close() {
+    try {
+      this.stream?.end();
+    } catch {}
     this.stream = null;
   }
 }
