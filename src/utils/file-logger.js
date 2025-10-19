@@ -68,15 +68,18 @@ class FileLogger {
       }
       this.stream?.write(`${line}\n`);
       if (this.mirrorConsole) {
+        /* eslint-disable no-console -- intentional console mirror as a last-resort fallback */
         let fn;
         if (level === 'error') fn = console.error;
         else if (level === 'warn') fn = console.warn;
         else fn = console.log;
         fn(line);
+        /* eslint-enable no-console */
       }
     } catch (e) {
       // last resort
       try {
+        /* eslint-disable-next-line no-console -- last-resort fallback if file writes fail */
         console.error('Logger write failed:', e);
       } catch (e2) {
         // ignore secondary logger errors

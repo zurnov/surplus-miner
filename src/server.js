@@ -93,7 +93,10 @@ function papiRequest(command) {
     const settle = (err, val) => {
       if (settled) return;
       settled = true;
-      err ? reject(err) : resolve(val);
+      if (err) {
+        return reject(err);
+      }
+      return resolve(val);
     };
 
     client.setEncoding('utf8');
