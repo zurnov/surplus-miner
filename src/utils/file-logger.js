@@ -1,20 +1,12 @@
 const fs = require('fs');
 const path = require('path');
+const pino = require('pino');
 
 /**
- * Simple rotating file logger.
- * - Writes human-readable lines to file.
- * - Creates logs directory if missing.
- * - Daily rotation (YYYY-MM-DD.log) by default.
- * - Optional console mirroring.
+ * Adapter-file logger using pino for structured output and a fallback human-readable file stream.
+ * Maintains the original FileLogger API: debug/info/warn/error, close()
  */
 class FileLogger {
-  /**
-   * @param {object} opts
-   * @param {string} [opts.dir] Directory for logs (default: ./logs)
-   * @param {string} [opts.prefix] File prefix (default: app)
-   * @param {boolean} [opts.console] Also log to console
-   */
   constructor(opts = {}) {
     this.dir = path.resolve(opts.dir || path.join(process.cwd(), 'logs'));
     this.prefix = opts.prefix || 'app';
@@ -22,6 +14,9 @@ class FileLogger {
     this.stream = null;
     this.currentDate = null;
     this.levels = ['debug', 'info', 'warn', 'error'];
+
+    const pinoOpts = { level: opts.level || process.env.LOG_LEVEL || 'info' };
+    this.logger = pino(pinoOpts);
   }
 
   ensureDir() {
@@ -39,7 +34,12 @@ class FileLogger {
   rotateIfNeeded() {
     const today = new Date().toDateString();
     if (this.currentDate !== today) {
-      this.close();
+      try {
+        if (this.stream) this.stream.end();
+      } catch (e) {
+        // ignore
+      }
+      this.stream = null;
       this.ensureDir();
       const fp = this.filePathFor(Date.now());
       this.stream = fs.createWriteStream(fp, { flags: 'a', encoding: 'utf8' });
@@ -49,6 +49,11 @@ class FileLogger {
 
   line(level, msg, meta) {
     try {
+      // Structured pino log
+      if (meta !== undefined) this.logger[level]({ meta }, msg);
+      else this.logger[level](msg);
+
+      // Human-readable file fallback (non-blocking)
       this.rotateIfNeeded();
       const now = new Date();
       const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
@@ -63,26 +68,19 @@ class FileLogger {
         try {
           line += ` ${typeof meta === 'string' ? meta : JSON.stringify(meta)}`;
         } catch (e) {
-          // ignore meta stringify errors
+          line += ' [meta-stringify-error]';
         }
       }
       this.stream?.write(`${line}\n`);
-      if (this.mirrorConsole) {
-        /* eslint-disable no-console -- intentional console mirror as a last-resort fallback */
-        let fn;
-        if (level === 'error') fn = console.error;
-        else if (level === 'warn') fn = console.warn;
-        else fn = console.log;
-        fn(line);
-        /* eslint-enable no-console */
-      }
+
+      // mirrorConsole is supported by writing structured logs to stdout (pino),
+      // so no extra console.* calls are necessary.
     } catch (e) {
-      // last resort
       try {
-        /* eslint-disable-next-line no-console -- last-resort fallback if file writes fail */
-        console.error('Logger write failed:', e);
-      } catch (e2) {
-        // ignore secondary logger errors
+        // eslint-disable-next-line no-console -- last-resort fallback
+        console.error('Logger failed', e);
+      } catch (_e) {
+        // ignore
       }
     }
   }
@@ -105,9 +103,9 @@ class FileLogger {
 
   close() {
     try {
-      this.stream?.end();
+      if (this.stream) this.stream.end();
     } catch (e) {
-      // ignore stream close errors
+      // ignore
     }
     this.stream = null;
   }
