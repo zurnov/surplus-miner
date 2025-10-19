@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const net = require('net');
 const { FileLogger } = require('./utils/file-logger');
 require('dotenv').config();
+const SSH_OPTS = process.env.SSH_OPTS || '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null';
 
 // Initialize file logger
 const LOG_TO_CONSOLE = /^true$/i.test(process.env.LOG_TO_CONSOLE || 'true');
@@ -334,7 +335,7 @@ app.post('/api/power-target', async (req, res) => {
   console.log('Raw body:', req.body);
   if (req.body.shutdown) {
     // SSH command to completely stop BOSminer
-    const sshCmd = `ssh root@${minerHost} "/etc/init.d/bosminer stop"`;
+    const sshCmd = `ssh ${SSH_OPTS} root@${minerHost} "/etc/init.d/bosminer stop"`;
     exec(sshCmd, (err, stdout, stderr) => {
       if (err) return res.status(500).json({ error: stderr || err.message });
       res.json({ ok: true, shutdown: true });
@@ -343,7 +344,7 @@ app.post('/api/power-target', async (req, res) => {
   }
   if (req.body.resume) {
     // SSH command to start BOSminer
-    const sshCmd = `ssh root@${minerHost} "/etc/init.d/bosminer start"`;
+    const sshCmd = `ssh ${SSH_OPTS} root@${minerHost} "/etc/init.d/bosminer start"`;
     exec(sshCmd, (err, stdout, stderr) => {
       if (err) return res.status(500).json({ error: stderr || err.message });
       res.json({ ok: true, resume: true });
@@ -355,7 +356,7 @@ app.post('/api/power-target', async (req, res) => {
   if (isNaN(watts) || watts < 0 || watts > 1600) return res.status(400).json({ error: 'Invalid value' });
 
   // SSH command to update power_target and reload bosminer
-  const sshCmd = `ssh root@${minerHost} "sed -i -E 's/^([[:space:]]*power_target[[:space:]]*=[[:space:]]*)[0-9]+/\\1 ${watts}/' /etc/bosminer.toml && /etc/init.d/bosminer reload"`;
+  const sshCmd = `ssh ${SSH_OPTS} root@${minerHost} "sed -i -E 's/^([[:space:]]*power_target[[:space:]]*=[[:space:]]*)[0-9]+/\\1 ${watts}/' /etc/bosminer.toml && /etc/init.d/bosminer reload"`;
 
   exec(sshCmd, (err, stdout, stderr) => {
     if (err) return res.status(500).json({ error: stderr || err.message });
@@ -416,7 +417,7 @@ function applyMinerPower(host, logicalTarget){
     // Per-miner OFF (full BOSminer stop)
     if (logicalTarget === 0) {
       if (minerStopped[host]) return resolve({ host, skipped: true, reason: 'already-off' });
-      const sshCmd = `ssh root@${host} "/etc/init.d/bosminer stop"`;
+      const sshCmd = `ssh ${SSH_OPTS} root@${host} "/etc/init.d/bosminer stop"`;
       exec(sshCmd, (err, stdout, stderr) => {
         if (err) {
           logger.error(`Stop error on ${host}`, { error: stderr || err.message });
@@ -439,7 +440,7 @@ function applyMinerPower(host, logicalTarget){
     }
     parts.push(`sed -i -E 's/^([[:space:]]*power_target[[:space:]]*=[[:space:]]*)[0-9]+/\\1 ${logicalTarget}/' /etc/bosminer.toml`);
     parts.push('/etc/init.d/bosminer reload');
-    const sshCmd = `ssh root@${host} "${parts.join(' && ')}"`;
+    const sshCmd = `ssh ${SSH_OPTS} root@${host} "${parts.join(' && ')}"`;
 
     exec(sshCmd, (err, stdout, stderr) => {
       if (err) {
@@ -457,7 +458,7 @@ function applyMinerPower(host, logicalTarget){
 // Helper to stop all miners (BOSminer stop)
 async function shutdownAllMiners(){
   const tasks = MINER_HOSTS.map(host => new Promise((resolve) => {
-    const sshCmd = `ssh root@${host} "/etc/init.d/bosminer stop"`;
+    const sshCmd = `ssh ${SSH_OPTS} root@${host} "/etc/init.d/bosminer stop"`;
     exec(sshCmd, (err) => resolve({ host, ok: !err }));
   }));
   return Promise.allSettled(tasks);
@@ -466,7 +467,7 @@ async function shutdownAllMiners(){
 // Helper to start all miners (BOSminer start)
 async function startAllMiners(){
   const tasks = MINER_HOSTS.map(host => new Promise((resolve) => {
-    const sshCmd = `ssh root@${host} "/etc/init.d/bosminer start"`;
+    const sshCmd = `ssh ${SSH_OPTS} root@${host} "/etc/init.d/bosminer start"`;
     exec(sshCmd, (err) => resolve({ host, ok: !err }));
   }));
   return Promise.allSettled(tasks);
@@ -1047,7 +1048,7 @@ async function detectInitialMinerStates(){
   logger.info('Detecting initial miner states...');
   const tasks = MINER_HOSTS.map(host => new Promise(resolve => {
     // Use single quotes outside and carefully escape inner single quotes for sed/grep
-    const sshCmd = `ssh root@${host} 'if /etc/init.d/bosminer status >/dev/null 2>&1 || pgrep -x bosminer >/dev/null; then state=RUNNING; else state=STOPPED; fi; pt=$(grep -E "^[[:space:]]*power_target[[:space:]]*=" /etc/bosminer.toml 2>/dev/null | head -1 | sed -E "s/.*=[[:space:]]*([0-9]+).*/\\1/"); echo "$state $pt"'`;
+    const sshCmd = `ssh ${SSH_OPTS} root@${host} 'if /etc/init.d/bosminer status >/dev/null 2>&1 || pgrep -x bosminer >/dev/null; then state=RUNNING; else state=STOPPED; fi; pt=$(grep -E "^[[:space:]]*power_target[[:space:]]*=" /etc/bosminer.toml 2>/dev/null | head -1 | sed -E "s/.*=[[:space:]]*([0-9]+).*/\\1/"); echo "$state $pt"'`;
     exec(sshCmd, (err, stdout, stderr) => {
       if (err) {
         logger.warn(`Initial detect failed for ${host}`, { error: stderr || err.message });

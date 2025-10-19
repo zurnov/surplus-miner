@@ -1,0 +1,25 @@
+FROM node:18-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Install production dependencies
+COPY package*.json ./
+RUN npm ci --only=production --silent
+
+# Copy application code and static UI
+COPY src ./src
+COPY public ./public
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+
+# Install SSH client required for SSH control of miners
+RUN apk add --no-cache openssh-client
+
+# Ensure logs and ssh dirs exist, make entrypoint executable
+RUN mkdir -p /app/logs /root/.ssh && chmod +x /docker-entrypoint.sh || true
+
+EXPOSE 3099
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD node -e "const http=require('http');const req=http.get('http://127.0.0.1:3099/api/power',res=>process.exit(0));req.on('error',()=>process.exit(1));"
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["node","src/power-control.js"]

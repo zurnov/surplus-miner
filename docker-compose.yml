@@ -1,0 +1,36 @@
+version: "3.8"
+services:
+  power-control:
+    build:
+      context: .
+      dockerfile: Dockerfile.power-control
+    container_name: power-control
+    env_file: .env
+    ports:
+      - "3099:3099"
+    volumes:
+      - ./public:/app/public:ro
+      - ./logs:/app/logs
+      - ${HOME}/.ssh:/root/.ssh:ro
+    restart: unless-stopped
+    networks:
+      - braiins-net
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: braiins-server
+    env_file: .env
+    ports:
+      - "3030:3030"
+    volumes:
+      - ./public:/app/public:ro
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - braiins-net
+
+networks:
+  braiins-net:
+    driver: bridge

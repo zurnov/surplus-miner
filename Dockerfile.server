@@ -1,0 +1,21 @@
+FROM node:18-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Install production dependencies
+COPY package*.json ./
+RUN npm ci --only=production --silent
+
+# Copy application code and static UI
+COPY src ./src
+COPY public ./public
+
+# Ensure logs directory exists
+RUN mkdir -p /app/logs && chown -R node:node /app/logs || true
+
+USER node
+EXPOSE 3030
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD node -e "const http=require('http');const req=http.get('http://127.0.0.1:3030/api/overview',res=>process.exit(0));req.on('error',()=>process.exit(1));"
+
+CMD ["node","src/server.js"]
