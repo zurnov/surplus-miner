@@ -1102,6 +1102,14 @@ function pickBestCombo(surplusW, nMiners) {
   const allowed = Array.from(new Set(ALLOWED_LEVELS))
     .slice()
     .sort((a, b) => a - b);
+
+  // Trimming policy for DP map growth:
+  // - MAX_DP_SIZE: when dp.size exceeds this, run a trimming pass.
+  // - TRIM_TO: keep only this many best candidates (closest to surplusW).
+  // These values are conservative defaults; tune based on real workloads.
+  const MAX_DP_SIZE = 20000;
+  const TRIM_TO = 10000;
+
   if (!nMiners || nMiners <= 0) return [];
   // Fast path for single miner
   if (nMiners === 1) {
@@ -1142,12 +1150,21 @@ function pickBestCombo(surplusW, nMiners) {
     }
     dp = next;
     // Safety: if dp size explodes extremely large, cap by trimming unlikely large sums.
-    // Keep sums up to (surplusW + maxAllowed) to allow small overshoot choices.
-    if (dp.size > 20000) {
+    if (dp.size > MAX_DP_SIZE) {
+      const dpSizeBefore = dp.size;
+      // Keep TRIM_TO sums closest to the desired target (surplusW).
       const entries = Array.from(dp.entries())
         .sort((a, b) => Math.abs(a[0] - surplusW) - Math.abs(b[0] - surplusW))
-        .slice(0, 10000);
+        .slice(0, TRIM_TO);
       dp = new Map(entries);
+      if (typeof logger !== 'undefined' && logger && logger.debug) {
+        logger.debug('pickBestCombo: trimmed dp', {
+          originalSize: dpSizeBefore,
+          kept: dp.size,
+          surplusW,
+          nMiners,
+        });
+      }
     }
   }
 
