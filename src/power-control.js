@@ -5,6 +5,7 @@ const mqtt = require('mqtt');
 const http = require('http');
 const { Server } = require('socket.io');
 const net = require('net');
+const path = require('path');
 const { FileLogger } = require('./utils/file-logger');
 require('dotenv').config();
 
@@ -14,7 +15,7 @@ const SSH_OPTS =
 // Initialize file logger
 const LOG_TO_CONSOLE = /^true$/i.test(process.env.LOG_TO_CONSOLE || 'true');
 const logger = new FileLogger({
-  dir: process.env.LOG_DIR || require('path').join(process.cwd(), 'logs'),
+  dir: process.env.LOG_DIR || path.join(process.cwd(), 'logs'),
   prefix: 'power-control',
   console: LOG_TO_CONSOLE,
 });
@@ -29,7 +30,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 // Serve static frontend
-app.use(express.static(require('path').join(__dirname, '..', 'public')));
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 const MINER_HOSTS = (process.env.MINER_HOSTS || '')
   .split(',')
@@ -255,7 +256,7 @@ function extractPower(estatsRoot) {
   const totals = [];
   const perChain = [];
 
-  const isNum = (v) => typeof v === 'number' && isFinite(v);
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
   const plausibleTotal = (v) => isNum(v) && v >= 50 && v <= 10000; // W
   const plausibleChain = (v) => isNum(v) && v >= 5 && v <= 5000; // W
 
@@ -351,7 +352,7 @@ app.get('/api/power', async (req, res) => {
 
 app.post('/api/power-target', async (req, res) => {
   const minerHost = getMinerHost(req);
-  console.log('Raw body:', req.body);
+  logger.debug('Raw body', { body: req.body });
   if (req.body.shutdown) {
     // SSH command to completely stop BOSminer
     const sshCmd = `ssh ${SSH_OPTS} root@${minerHost} "/etc/init.d/bosminer stop"`;
@@ -370,9 +371,9 @@ app.post('/api/power-target', async (req, res) => {
     });
     return;
   }
-  console.log('Received watts:', req.body.watts, typeof req.body.watts);
+  logger.info('Received watts', { watts: req.body.watts, type: typeof req.body.watts });
   const watts = Number(req.body.watts);
-  if (isNaN(watts) || watts < 0 || watts > 1600)
+  if (Number.isNaN(watts) || watts < 0 || watts > 1600)
     return res.status(400).json({ error: 'Invalid value' });
 
   // SSH command to update power_target and reload bosminer
@@ -980,10 +981,9 @@ function papiRequest(command, host) {
       settled = true;
       if (err) {
         logger.error('papi socket error', { command, host, error: err.message });
-        settle(err);
-      } else {
-        resolve(val);
+        return reject(err);
       }
+      resolve(val);
     };
 
     client.setEncoding('utf8');
@@ -1034,7 +1034,7 @@ function splitTopLevelJSONObjects(s) {
   let start = -1;
   let inStr = false;
   let esc = false;
-  for (let i = 0; i < s.length; i++) {
+  for (let i = 0; i < s.length; i += 1) {
     const ch = s[i];
     if (inStr) {
       if (esc) {
@@ -1114,7 +1114,7 @@ function pickBestCombo(surplusW, nMiners) {
   let dp = new Map();
   dp.set(0, []);
 
-  for (let count = 1; count <= nMiners; count++) {
+  for (let count = 1; count <= nMiners; count += 1) {
     const next = new Map();
     for (const [sum, combo] of dp.entries()) {
       for (const lvl of allowed) {
@@ -1207,7 +1207,7 @@ async function detectInitialMinerStates() {
         minerStopped[r.host] = false;
         // If we detect an existing power target keep it; else default MIN_POWER
         lastAutoTargets[r.host] = r.power > 0 ? r.power : MIN_POWER;
-        runningCount++;
+        runningCount += 1;
       } else if (r.state === 'STOPPED') {
         minerStopped[r.host] = true;
         lastAutoTargets[r.host] = 0;
