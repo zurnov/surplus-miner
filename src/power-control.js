@@ -1144,7 +1144,6 @@ function pickBestCombo(surplusW, nMiners) {
     // Safety: if dp size explodes extremely large, cap by trimming unlikely large sums.
     // Keep sums up to (surplusW + maxAllowed) to allow small overshoot choices.
     if (dp.size > 20000) {
-      const maxAllowed = allowed[allowed.length - 1] * nMiners;
       const entries = Array.from(dp.entries())
         .sort((a, b) => Math.abs(a[0] - surplusW) - Math.abs(b[0] - surplusW))
         .slice(0, 10000);
